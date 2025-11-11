@@ -13,6 +13,20 @@ class BinPackingResult:
     total_cost: float
     bins: List[dict]
 
+    def __str__(self):
+        cost_text = f"Total cost: {self.total_cost}"
+        bins_text = ""
+        for bin in self.bins:
+            bin_type = bin['bin_type']
+            remaining_capacity = bin['remaining_capacity']
+            item_counts = bin['item_counts']
+            bins_text += f"Bin type: {bin_type}\n" 
+            bins_text += f"Remaining capacity:\n{remaining_capacity}\n"
+            bins_text += f"Item counts:\n{item_counts}\n"
+            bins_text += "\n"
+        return f"{cost_text}\n{bins_text}"
+
+
 
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
     arr = np.asarray(vec, dtype=float).reshape(-1)
@@ -130,6 +144,9 @@ def example():
     purchase_costs = np.array([5.0, 7.0])
     opening_costs = np.array([1.0, 1.5])
     L = np.array([2, 3])
+
+    print(f"Bins:\n{C}")
+    print(f"Items:\n{R}\n")
 
     result = first_fit(C, R, purchase_costs, opening_costs, L)
     print(result)
