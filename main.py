@@ -7,25 +7,35 @@ import numpy as np
 
 
 @dataclass
+class BinInfo:
+    """State for a single bin during packing."""
+
+    bin_type: int
+    remaining_capacity: np.ndarray
+    item_counts: np.ndarray
+
+    def __str__(self) -> str:
+        parts = [
+            f"Bin type: {self.bin_type}",
+            f"Remaining capacity:\n{self.remaining_capacity}",
+            f"Item counts:\n{self.item_counts}",
+        ]
+        return "\n".join(parts)
+
+
+@dataclass
 class BinPackingResult:
     """Container for the packing outcome."""
 
     total_cost: float
-    bins: List[dict]
+    bins: List[BinInfo]
 
     def __str__(self):
         cost_text = f"Total cost: {self.total_cost}"
         bins_text = ""
         for bin in self.bins:
-            bin_type = bin['bin_type']
-            remaining_capacity = bin['remaining_capacity']
-            item_counts = bin['item_counts']
-            bins_text += f"Bin type: {bin_type}\n" 
-            bins_text += f"Remaining capacity:\n{remaining_capacity}\n"
-            bins_text += f"Item counts:\n{item_counts}\n"
-            bins_text += "\n"
+            bins_text += f"{bin}\n\n"
         return f"{cost_text}\n{bins_text}"
-
 
 
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
@@ -87,16 +97,16 @@ def first_fit(
     if L.shape[0] != J:
         raise ValueError(f"L must have length {J}, got {L.shape[0]}.")
 
-    bins: List[dict] = []
+    bins: List[BinInfo] = []
     total_cost = 0.0
 
-    def _create_bin(bin_type: int) -> dict:
+    def _create_bin(bin_type: int) -> BinInfo:
         capacity = C[:, [bin_type]].copy()
-        bin_info = {
-            "bin_type": bin_type,
-            "remaining_capacity": capacity,
-            "item_counts": np.zeros(J, dtype=int),
-        }
+        bin_info = BinInfo(
+            bin_type=bin_type,
+            remaining_capacity=capacity,
+            item_counts=np.zeros(J, dtype=int),
+        )
         bins.append(bin_info)
         return bin_info
 
@@ -110,9 +120,9 @@ def first_fit(
         for _ in range(int(L[j])):
             placed = False
             for bin_info in bins:
-                if np.all(bin_info["remaining_capacity"] >= demand):
-                    bin_info["remaining_capacity"] -= demand
-                    bin_info["item_counts"][j] += 1
+                if np.all(bin_info.remaining_capacity >= demand):
+                    bin_info.remaining_capacity -= demand
+                    bin_info.item_counts[j] += 1
                     placed = True
                     break
 
@@ -125,8 +135,8 @@ def first_fit(
                     total_cost += float(
                         purchase_costs[bin_type] + opening_costs[bin_type]
                     )
-                    bin_info["remaining_capacity"] -= demand
-                    bin_info["item_counts"][j] += 1
+                    bin_info.remaining_capacity -= demand
+                    bin_info.item_counts[j] += 1
                     placed = True
                     break
 
