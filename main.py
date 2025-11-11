@@ -148,18 +148,60 @@ def first_fit(
     return BinPackingResult(total_cost=total_cost, bins=bins)
 
 
+def first_fit_decreasing(
+    C: np.ndarray,
+    R: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    L: np.ndarray,
+) -> BinPackingResult:
+    """
+    Run first-fit after sorting item requirements per dimension in non-increasing order.
+
+    The sorting uses ``np.sort`` (ascending) followed by ``np.fliplr`` to flip the
+    columns, yielding a decreasing order for each row.
+    """
+
+    R_array = np.asarray(R, dtype=float)
+    if R_array.ndim != 2:
+        raise ValueError("R must be a 2D matrix.")
+
+    L_array = np.asarray(L, dtype=int).reshape(-1)
+    if L_array.shape[0] != R_array.shape[1]:
+        raise ValueError(
+            f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
+        )
+
+    # Sort ascending along each row (dimension) then flip columns for decreasing order.
+    R_sorted = np.fliplr(np.sort(R_array.copy(), axis=1))
+
+    return first_fit(C, R_sorted, purchase_costs, opening_costs, L_array)
+
+
 def example():
     C = np.array([[10, 15], [8, 12]], dtype=float)  # 2 dimensions, 2 bin types
-    R = np.array([[6, 4], [4, 3]], dtype=float)  # 2 item types
+    R = np.array([[4, 6], [3, 4]], dtype=float)  # 2 item types
+
+    print(f"Items:\n{C}")
+    print(f"Bins:\n{R}\n")
+    print("-" * 60)
+
     purchase_costs = np.array([5.0, 7.0])
     opening_costs = np.array([1.0, 1.5])
     L = np.array([2, 3])
 
-    print(f"Bins:\n{C}")
-    print(f"Items:\n{R}\n")
+    ff_result = first_fit(C, R, purchase_costs, opening_costs, L)
+    print("First-fit:")
+    print(ff_result)
 
-    result = first_fit(C, R, purchase_costs, opening_costs, L)
-    print(result)
+    print("-" * 60)
+
+    ffd_result = first_fit_decreasing(C, R, purchase_costs, opening_costs, L)
+    print("First-fit decreasing:")
+    print(ffd_result)
+
+    improvement = ffd_result.total_cost / ff_result.total_cost
+    print(f"Improvement factor: {improvement}")
 
 
 if __name__ == "__main__":
