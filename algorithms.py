@@ -209,7 +209,7 @@ def _ffd_single_machine_type(
     capacity: np.ndarray, requirements: np.ndarray, job_counts: np.ndarray
 ) -> int:
     """
-    FFD packing helper where all bins have the same capacity vector.
+    Wrapper that runs ``first_fit`` for a single bin type.
 
     Parameters
     ----------
@@ -226,7 +226,7 @@ def _ffd_single_machine_type(
         Number of bins opened by the heuristic.
     """
 
-    cap_vec = np.asarray(capacity, dtype=float).reshape(-1)
+    cap_vec = np.asarray(capacity, dtype=float).reshape(-1, 1)
     req = np.asarray(requirements, dtype=float)
     counts = np.asarray(job_counts, dtype=int).reshape(-1)
 
@@ -237,30 +237,20 @@ def _ffd_single_machine_type(
             f"job_counts length must match the number of job types. Expected {req.shape[1]}, got {counts.shape[0]}."
         )
 
-    # Order job types by decreasing total demand so FFD packs larger jobs first.
-    order = np.argsort(np.sum(req, axis=0))[::-1]
-    bins: List[np.ndarray] = []
-    for j in order:
-        demand = req[:, j]
-        num_jobs = int(counts[j])
-        if num_jobs <= 0:
-            continue
-        if np.any(demand > cap_vec):
-            raise ValueError(
-                f"Job type {j} can not fit in the provided capacity vector; "
-                "expected these jobs to be filtered out beforehand."
-            )
-        for _ in range(num_jobs):
-            placed = False
-            for remaining in bins:
-                if np.all(remaining >= demand):
-                    remaining -= demand
-                    placed = True
-                    break
-            if not placed:
-                bins.append(cap_vec.copy() - demand)
+    # Purchase and opening costs do not matter for the upper-bound calculation,
+    # so we provide zeros and only look at the number of bins returned.
+    purchase_costs = np.zeros(1)
+    opening_costs = np.zeros(1)
 
-    return len(bins)
+    result = first_fit(
+        C=cap_vec,
+        R=req,
+        purchase_costs=purchase_costs,
+        opening_costs=opening_costs,
+        L=counts,
+    )
+
+    return len(result.bins)
 
 
 def machines_upper_bound(
