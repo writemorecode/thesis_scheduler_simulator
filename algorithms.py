@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections import Counter
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Sequence
 
 import numpy as np
 
@@ -53,6 +53,7 @@ def first_fit(
     purchase_costs: np.ndarray,
     opening_costs: np.ndarray,
     L: np.ndarray,
+    opened_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
     """
     Run the first-fit heterogeneous multidimensional bin packing heuristic.
@@ -69,6 +70,9 @@ def first_fit(
         Length M column vector with the opening cost for each bin type.
     L : np.ndarray
         Length J column vector with the number of items (per type) to pack.
+    opened_bins : array-like of shape (M,), optional
+        Pre-opened bin counts per type. These bins are available before packing starts
+        and their purchase+opening cost is charged up front.
 
     Returns
     -------
@@ -99,6 +103,18 @@ def first_fit(
     if L.shape[0] != J:
         raise ValueError(f"L must have length {J}, got {L.shape[0]}.")
 
+    per_bin_costs = purchase_costs + opening_costs
+
+    opened_bins_vec = None
+    if opened_bins is not None:
+        opened_bins_vec = np.asarray(opened_bins, dtype=int).reshape(-1)
+        if opened_bins_vec.shape[0] != M:
+            raise ValueError(
+                f"opened_bins must have one entry per bin type ({M}); got {opened_bins_vec.shape[0]}."
+            )
+        if np.any(opened_bins_vec < 0):
+            raise ValueError("opened_bins entries must be non-negative.")
+
     bins: List[BinInfo] = []
     total_cost = 0.0
 
@@ -111,6 +127,12 @@ def first_fit(
         )
         bins.append(bin_info)
         return bin_info
+
+    if opened_bins_vec is not None:
+        total_cost += float(np.dot(opened_bins_vec, per_bin_costs))
+        for bin_type, count in enumerate(opened_bins_vec):
+            for _ in range(int(count)):
+                _create_bin(bin_type)
 
     for j in range(J):
         demand = R[:, [j]]
@@ -134,9 +156,7 @@ def first_fit(
             for bin_type in range(M):
                 if np.all(C[:, [bin_type]] >= demand):
                     bin_info = _create_bin(bin_type)
-                    total_cost += float(
-                        purchase_costs[bin_type] + opening_costs[bin_type]
-                    )
+                    total_cost += float(per_bin_costs[bin_type])
                     bin_info.remaining_capacity -= demand
                     bin_info.item_counts[j] += 1
                     placed = True
@@ -156,12 +176,16 @@ def first_fit_decreasing(
     purchase_costs: np.ndarray,
     opening_costs: np.ndarray,
     L: np.ndarray,
+    opened_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
     """
     Run first-fit after sorting item requirements per dimension in non-increasing order.
 
     The sorting uses ``np.sort`` (ascending) followed by ``np.fliplr`` to flip the
     columns, yielding a decreasing order for each row.
+
+    Parameters mirror :func:`first_fit`; ``opened_bins`` is forwarded directly without
+    modification.
     """
 
     R_array = np.asarray(R, dtype=float)
@@ -177,7 +201,9 @@ def first_fit_decreasing(
     # Sort ascending along each row (dimension) then flip columns for decreasing order.
     R_sorted = np.fliplr(np.sort(R_array.copy(), axis=1))
 
-    return first_fit(C, R_sorted, purchase_costs, opening_costs, L_array)
+    return first_fit(
+        C, R_sorted, purchase_costs, opening_costs, L_array, opened_bins=opened_bins
+    )
 
 
 def _pareto_non_dominated(time_slots: np.ndarray) -> np.ndarray:

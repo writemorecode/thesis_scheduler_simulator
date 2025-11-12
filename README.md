@@ -14,5 +14,7 @@ The example in `main.py` demonstrates how to structure the input matrices:
 - `R` (`K x J`): item requirement columns (one column per item type).
 - `L` (`J x 1`): counts of each item type.
 - `purchase_costs`, `opening_costs`: one entry per bin type.
+- `opened_bins` (optional): length-`M` vector with how many bins of each type are
+  already open; their purchase + opening costs are charged immediately.
 
 Import `first_fit` to use the simulator inside your own scripts.

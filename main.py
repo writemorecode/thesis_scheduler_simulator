@@ -23,6 +23,14 @@ def example():
 
     print("-" * 60)
 
+    ff_preopened = first_fit(
+        C, R, purchase_costs, opening_costs, L, opened_bins=upper_bound
+    )
+    print("First-fit with pre-opened bins (upper bound)")
+    print(ff_preopened)
+
+    print("-" * 60)
+
     ffd_result = first_fit_decreasing(C, R, purchase_costs, opening_costs, L)
     print("First-fit decreasing:", ffd_result.total_cost)
     print(ffd_result)
