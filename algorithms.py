@@ -176,3 +176,169 @@ def first_fit_decreasing(
     R_sorted = np.fliplr(np.sort(R_array.copy(), axis=1))
 
     return first_fit(C, R_sorted, purchase_costs, opening_costs, L_array)
+
+
+def _pareto_non_dominated(time_slots: np.ndarray) -> np.ndarray:
+    """Return only the time slots that are not strictly Pareto dominated by another slot."""
+
+    if time_slots.size == 0:
+        return time_slots
+
+    # Remove duplicate rows first; duplicate slots convey no new information.
+    unique_slots, unique_indices = np.unique(time_slots, axis=0, return_index=True)
+    unique_slots = unique_slots[np.argsort(unique_indices)]
+
+    keep_mask = np.ones(len(unique_slots), dtype=bool)
+    for i in range(len(unique_slots)):
+        if not keep_mask[i]:
+            continue
+        for j in range(len(unique_slots)):
+            if i == j:
+                continue
+            dominates = np.all(unique_slots[j] >= unique_slots[i]) and np.any(
+                unique_slots[j] > unique_slots[i]
+            )
+            if dominates:
+                keep_mask[i] = False
+                break
+
+    return unique_slots[keep_mask]
+
+
+def _ffd_single_machine_type(
+    capacity: np.ndarray, requirements: np.ndarray, job_counts: np.ndarray
+) -> int:
+    """
+    FFD packing helper where all bins have the same capacity vector.
+
+    Parameters
+    ----------
+    capacity : np.ndarray
+        One-dimensional array with the remaining capacity per resource for the bin type.
+    requirements : np.ndarray
+        Matrix of shape (K, J) containing per-resource demand for each job type.
+    job_counts : np.ndarray
+        Length-J vector with the number of jobs of each type to place.
+
+    Returns
+    -------
+    int
+        Number of bins opened by the heuristic.
+    """
+
+    cap_vec = np.asarray(capacity, dtype=float).reshape(-1)
+    req = np.asarray(requirements, dtype=float)
+    counts = np.asarray(job_counts, dtype=int).reshape(-1)
+
+    if req.ndim != 2:
+        raise ValueError("requirements must be a 2D matrix.")
+    if counts.shape[0] != req.shape[1]:
+        raise ValueError(
+            f"job_counts length must match the number of job types. Expected {req.shape[1]}, got {counts.shape[0]}."
+        )
+
+    # Order job types by decreasing total demand so FFD packs larger jobs first.
+    order = np.argsort(np.sum(req, axis=0))[::-1]
+    bins: List[np.ndarray] = []
+    for j in order:
+        demand = req[:, j]
+        num_jobs = int(counts[j])
+        if num_jobs <= 0:
+            continue
+        if np.any(demand > cap_vec):
+            raise ValueError(
+                f"Job type {j} can not fit in the provided capacity vector; "
+                "expected these jobs to be filtered out beforehand."
+            )
+        for _ in range(num_jobs):
+            placed = False
+            for remaining in bins:
+                if np.all(remaining >= demand):
+                    remaining -= demand
+                    placed = True
+                    break
+            if not placed:
+                bins.append(cap_vec.copy() - demand)
+
+    return len(bins)
+
+
+def machines_upper_bound(
+    C: np.ndarray, R: np.ndarray, time_slots: np.ndarray
+) -> np.ndarray:
+    """
+    Compute the component-wise upper bound on the required number of machines of each type.
+
+    The procedure follows the method described in ``method.typ``:
+    1. Filter time slots down to the Pareto frontier so only the most demanding slots remain.
+    2. For every remaining slot and machine type, drop job types that physically cannot
+       run on that machine (any requirement exceeds the machine capacity in some dimension).
+    3. Run FFD using only that machine type to get an upper bound for the slot.
+    4. Take the maximum bound across all surviving time slots.
+
+    Parameters
+    ----------
+    C : np.ndarray
+        Matrix of shape (K, M) with the per-resource capacity of each machine type.
+    R : np.ndarray
+        Matrix of shape (K, J) with the per-resource demand of each job type.
+    time_slots : np.ndarray
+        Either a length-J vector or a (T, J) matrix with counts of jobs scheduled in
+        each time slot.
+
+    Returns
+    -------
+    np.ndarray
+        Length-M vector where entry ``i`` is the upper bound on machines of type ``i``.
+    """
+
+    capacities = np.asarray(C, dtype=float)
+    requirements = np.asarray(R, dtype=float)
+    if capacities.ndim != 2 or requirements.ndim != 2:
+        raise ValueError("C and R must be 2D matrices.")
+
+    K, M = capacities.shape
+    K_req, J = requirements.shape
+    if K != K_req:
+        raise ValueError(
+            f"C and R must describe the same number of resources. Got {K} and {K_req}."
+        )
+
+    slot_array = np.asarray(time_slots, dtype=int)
+    if slot_array.ndim == 1:
+        if slot_array.shape[0] != J:
+            raise ValueError(
+                f"time_slots vector length must match the number of job types ({J})."
+            )
+        slot_array = slot_array.reshape(1, -1)
+    elif slot_array.ndim == 2:
+        if slot_array.shape[1] != J:
+            raise ValueError(
+                f"time_slots matrix must have {J} columns (one per job type), got {slot_array.shape[1]}."
+            )
+    else:
+        raise ValueError("time_slots must be a vector or a 2D matrix.")
+
+    # Remove empty slots early to avoid unnecessary FFD runs.
+    nonzero_mask = np.any(slot_array > 0, axis=1)
+    slot_array = slot_array[nonzero_mask]
+    if slot_array.size == 0:
+        return np.zeros(M, dtype=int)
+
+    candidate_slots = _pareto_non_dominated(slot_array)
+    upper_bound = np.zeros(M, dtype=int)
+
+    for m in range(M):
+        capacity = capacities[:, m]
+        # Identify job types that cannot run on machine type m.
+        unsupported_jobs = np.any(requirements > capacity.reshape(-1, 1), axis=0)
+        max_bins = 0
+        for slot in candidate_slots:
+            lambda_vec = slot.copy()
+            lambda_vec[unsupported_jobs] = 0
+            bins_needed = _ffd_single_machine_type(capacity, requirements, lambda_vec)
+            if bins_needed > max_bins:
+                max_bins = bins_needed
+        upper_bound[m] = max_bins
+
+    return upper_bound
