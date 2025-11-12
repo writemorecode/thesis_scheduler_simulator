@@ -6,33 +6,26 @@ from algorithms import first_fit, first_fit_decreasing, machines_upper_bound
 
 
 def example():
-    C = np.array([[10, 15], [8, 12]], dtype=float)  # 2 dimensions, 2 bin types
-    R = np.array([[4, 6], [3, 4]], dtype=float)  # 2 item types
-
-    print(f"Items:\n{C}")
-    print(f"Bins:\n{R}\n")
-    print("-" * 60)
+    C = np.array([[10, 15], [8, 12]], dtype=float)
+    R = np.array([[4, 6], [3, 4]], dtype=float)
 
     purchase_costs = np.array([5.0, 7.0])
     opening_costs = np.array([1.0, 1.5])
     L = np.array([2, 3])
 
+    upper_bound = machines_upper_bound(C, R, L)
+    print(f"Upper bound on machines per type: {upper_bound}")
+    print("-" * 60)
+
     ff_result = first_fit(C, R, purchase_costs, opening_costs, L)
-    print("First-fit:")
+    print("First-fit")
     print(ff_result)
 
     print("-" * 60)
 
     ffd_result = first_fit_decreasing(C, R, purchase_costs, opening_costs, L)
-    print("First-fit decreasing:")
+    print("First-fit decreasing:", ffd_result.total_cost)
     print(ffd_result)
-
-    improvement = ffd_result.total_cost / ff_result.total_cost
-    print(f"Improvement factor: {improvement}")
-
-    upper_bound = machines_upper_bound(C, R, L)
-    print("-" * 60)
-    print(f"Upper bound on machines per type: {upper_bound}")
 
 
 if __name__ == "__main__":

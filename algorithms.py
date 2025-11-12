@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import Counter
 
 from dataclasses import dataclass
 from typing import List
@@ -33,8 +34,9 @@ class BinPackingResult:
     def __str__(self):
         cost_text = f"Total cost: {self.total_cost}"
         bins_text = ""
-        for bin in self.bins:
-            bins_text += f"{bin}\n\n"
+        bin_counts = Counter(bin_info.bin_type for bin_info in self.bins).most_common()
+        for bin_type, count in bin_counts:
+            bins_text += f"Bin type {bin_type}: {count}\n"
         return f"{cost_text}\n{bins_text}"
 
 
