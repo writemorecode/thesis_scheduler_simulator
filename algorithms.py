@@ -13,12 +13,14 @@ class BinInfo:
     """State for a single bin during packing."""
 
     bin_type: int
+    capacity: np.ndarray
     remaining_capacity: np.ndarray
     item_counts: np.ndarray
 
     def __str__(self) -> str:
         parts = [
             f"Bin type: {self.bin_type}",
+            f"Total capacity:\n{self.capacity}",
             f"Remaining capacity:\n{self.remaining_capacity}",
             f"Item counts:\n{self.item_counts}",
         ]
@@ -56,6 +58,7 @@ class TimeSlotSolution:
             bins=[
                 BinInfo(
                     bin_type=b.bin_type,
+                    capacity=b.capacity.copy(),
                     remaining_capacity=b.remaining_capacity.copy(),
                     item_counts=b.item_counts.copy(),
                 )
@@ -72,6 +75,66 @@ class ScheduleResult:
     machine_vector: np.ndarray
     upper_bound: np.ndarray
     time_slot_solutions: List[TimeSlotSolution]
+
+    def __str__(self) -> str:
+        def _format_vector(vec: np.ndarray) -> str:
+            flat = np.asarray(vec).reshape(-1)
+            if flat.size == 0:
+                return "[]"
+            entries = []
+            for value in flat:
+                num = float(value)
+                if np.isfinite(num) and num.is_integer():
+                    entries.append(str(int(num)))
+                else:
+                    entries.append(f"{num:g}")
+            return f"[{', '.join(entries)}]"
+
+        lines = [f"Total cost: {self.total_cost:.2f}"]
+        lines.append("Machine selection (count / upper bound):")
+
+        machine_counts = np.asarray(self.machine_vector).reshape(-1)
+        bounds = np.asarray(self.upper_bound).reshape(-1)
+        max_len = max(machine_counts.size, bounds.size)
+        if max_len == 0:
+            lines.append("  (no machines)")
+        else:
+            for idx in range(max_len):
+                count = int(machine_counts[idx]) if idx < machine_counts.size else 0
+                bound = int(bounds[idx]) if idx < bounds.size else 0
+                lines.append(f"  Type {idx}: {count} selected (upper bound {bound})")
+
+        lines.append("Time slots:")
+        if not self.time_slot_solutions:
+            lines.append("  (no time slots)")
+        else:
+            for slot_idx, slot in enumerate(self.time_slot_solutions):
+                lines.append(f"  Slot {slot_idx}:")
+                lines.append(
+                    f"    Machine counts: {_format_vector(slot.machine_counts)}"
+                )
+                if not slot.bins:
+                    lines.append("    No machines scheduled.")
+                    continue
+
+                for bin_idx, bin_info in enumerate(slot.bins):
+                    lines.append(f"    Machine {bin_idx} (type {bin_info.bin_type}):")
+                    lines.append(
+                        f"      Total capacity: {_format_vector(bin_info.capacity)}"
+                    )
+                    lines.append(
+                        f"      Remaining capacity: {_format_vector(bin_info.remaining_capacity)}"
+                    )
+
+                    items = [
+                        f"{int(count)}x job {job_type}"
+                        for job_type, count in enumerate(bin_info.item_counts)
+                        if int(count) > 0
+                    ]
+                    items_str = ", ".join(items) if items else "(empty)"
+                    lines.append(f"      Items: {items_str}")
+
+        return "\n".join(lines)
 
 
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
@@ -156,7 +219,8 @@ def first_fit(
         capacity = C[:, [bin_type]].copy()
         bin_info = BinInfo(
             bin_type=bin_type,
-            remaining_capacity=capacity,
+            capacity=capacity.copy(),
+            remaining_capacity=capacity.copy(),
             item_counts=np.zeros(J, dtype=int),
         )
         bins.append(bin_info)
@@ -417,6 +481,7 @@ def _build_time_slot_solution(
         active_bins.append(
             BinInfo(
                 bin_type=bin_info.bin_type,
+                capacity=bin_info.capacity.copy(),
                 remaining_capacity=bin_info.remaining_capacity.copy(),
                 item_counts=bin_info.item_counts.copy(),
             )
@@ -571,6 +636,7 @@ def repack_jobs(
     bins: List[BinInfo] = [
         BinInfo(
             bin_type=b.bin_type,
+            capacity=b.capacity.copy(),
             remaining_capacity=b.remaining_capacity.copy(),
             item_counts=b.item_counts.copy(),
         )
@@ -707,9 +773,10 @@ def schedule_jobs(
             neighbor_solutions, purchase_costs, running_costs
         )
 
-        if neighbor_signature in seen_solutions or np.any(
-            neighbor_machine_vector > upper_bound
-        ):
+        if neighbor_signature in seen_solutions:
+            break
+
+        if np.any(neighbor_machine_vector > upper_bound):
             break
 
         if not np.array_equal(neighbor_machine_vector, machine_vector):
