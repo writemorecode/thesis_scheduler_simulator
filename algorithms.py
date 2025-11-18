@@ -268,7 +268,10 @@ def _machine_counts_from_bins(bins: Sequence[BinInfo], num_types: int) -> np.nda
 
 
 def _build_time_slot_solution(
-    bins: Sequence[BinInfo], num_types: int
+    bins: Sequence[BinInfo],
+    num_types: int,
+    requirements: np.ndarray,
+    running_costs: np.ndarray | None = None,
 ) -> TimeSlotSolution:
     """Construct a time-slot solution from a raw bin list."""
 
@@ -285,6 +288,7 @@ def _build_time_slot_solution(
             )
         )
 
+    _sort_bins_by_utilization(active_bins, requirements, running_costs)
     machine_counts = _machine_counts_from_bins(active_bins, num_types)
     return TimeSlotSolution(machine_counts=machine_counts, bins=active_bins)
 
@@ -294,6 +298,7 @@ def _pack_time_slot_jobs(
     capacities: np.ndarray,
     requirements: np.ndarray,
     job_counts: np.ndarray,
+    running_costs: np.ndarray | None = None,
 ) -> TimeSlotSolution:
     """Pack a single time slot using FFD with the supplied machine vector."""
 
@@ -311,6 +316,14 @@ def _pack_time_slot_jobs(
             f"job_counts must have one entry per job type ({J}); got {job_counts.shape[0]}."
         )
 
+    running_cost_vec = None
+    if running_costs is not None:
+        running_cost_vec = np.asarray(running_costs, dtype=float).reshape(-1)
+        if running_cost_vec.shape[0] != M:
+            raise ValueError(
+                f"running_costs must have one entry per machine type ({M}); got {running_cost_vec.shape[0]}."
+            )
+
     zeros = np.zeros(M, dtype=float)
     result = first_fit(
         capacities,
@@ -321,7 +334,9 @@ def _pack_time_slot_jobs(
         opened_bins=machine_vector,
     )
 
-    slot_solution = _build_time_slot_solution(result.bins, M)
+    slot_solution = _build_time_slot_solution(
+        result.bins, M, requirements, running_cost_vec
+    )
     if np.any(slot_solution.machine_counts > machine_vector):
         raise ValueError(
             "Packing exceeded provided machine vector; the upper bound is insufficient."
@@ -334,13 +349,20 @@ def _pack_all_time_slots(
     capacities: np.ndarray,
     requirements: np.ndarray,
     job_matrix: np.ndarray,
+    running_costs: np.ndarray | None = None,
 ) -> List[TimeSlotSolution]:
     """Pack every time slot independently using the provided machine vector."""
 
     solutions = []
     for job_counts in job_matrix:
         solutions.append(
-            _pack_time_slot_jobs(machine_vector, capacities, requirements, job_counts)
+            _pack_time_slot_jobs(
+                machine_vector,
+                capacities,
+                requirements,
+                job_counts,
+                running_costs=running_costs,
+            )
         )
     return solutions
 
@@ -357,6 +379,29 @@ def _bin_utilization(bin_info: BinInfo, requirements: np.ndarray) -> float:
         ratios = np.divide(load, capacity, out=np.zeros_like(load), where=capacity > 0)
 
     return float(ratios.max()) if ratios.size else 0.0
+
+
+def _sort_bins_by_utilization(
+    bins: List[BinInfo],
+    requirements: np.ndarray,
+    running_costs: np.ndarray | None = None,
+) -> None:
+    """Sort bins in-place by utilization and running cost tie breaker."""
+
+    if not bins:
+        return
+
+    cost_vector = None
+    if running_costs is not None:
+        cost_vector = np.asarray(running_costs, dtype=float).reshape(-1)
+
+    def _sort_key(bin_info: BinInfo) -> Tuple[float, float]:
+        cost_component = (
+            -float(cost_vector[bin_info.bin_type]) if cost_vector is not None else 0.0
+        )
+        return (_bin_utilization(bin_info, requirements), cost_component)
+
+    bins.sort(key=_sort_key)
 
 
 def _sorted_jobs_for_bin(bin_info: BinInfo, requirements: np.ndarray) -> List[int]:
@@ -441,19 +486,11 @@ def repack_jobs(
         for b in slot_solution.bins
     ]
 
-    def _sort_bins() -> None:
-        bins.sort(
-            key=lambda b: (
-                _bin_utilization(b, requirements),
-                -running_costs[b.bin_type],
-            )
-        )
-
-    _sort_bins()
+    _sort_bins_by_utilization(bins, requirements, running_costs)
 
     while True:
         moved = False
-        _sort_bins()
+        _sort_bins_by_utilization(bins, requirements, running_costs)
         for source_idx, source in enumerate(bins):
             if int(np.sum(source.item_counts)) == 0:
                 continue
@@ -549,7 +586,7 @@ def schedule_jobs(
     machine_vector = upper_bound.copy()
 
     time_slot_solutions = _pack_all_time_slots(
-        machine_vector, capacities, requirements, job_matrix
+        machine_vector, capacities, requirements, job_matrix, running_costs
     )
     total_cost, machine_vector = _solution_cost(
         time_slot_solutions, purchase_costs, running_costs
@@ -579,7 +616,11 @@ def schedule_jobs(
 
         if not np.array_equal(neighbor_machine_vector, machine_vector):
             neighbor_solutions = _pack_all_time_slots(
-                neighbor_machine_vector, capacities, requirements, job_matrix
+                neighbor_machine_vector,
+                capacities,
+                requirements,
+                job_matrix,
+                running_costs,
             )
             neighbor_cost, neighbor_machine_vector = _solution_cost(
                 neighbor_solutions, purchase_costs, running_costs

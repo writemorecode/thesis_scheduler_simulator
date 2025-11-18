@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from algorithms import schedule_jobs
+from algorithms import _bin_utilization, schedule_jobs
 from visualization import visualize_schedule
 
 
@@ -33,7 +33,6 @@ def debugging():
     )
     schedule = schedule_jobs(C, R, L, purchase_costs, running_costs)
     print(schedule)
-
     _ = visualize_schedule(schedule, C, R, "out.png")
 
 
