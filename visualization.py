@@ -301,6 +301,14 @@ def visualize_schedule(
             capacity_vec = capacities[:, bin_info.bin_type].astype(float).reshape(-1)
             usage = (requirements @ bin_info.item_counts.reshape(-1, 1)).reshape(-1)
             remaining = bin_info.remaining_capacity.reshape(-1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                ratios = np.divide(
+                    usage,
+                    capacity_vec,
+                    out=np.zeros_like(usage, dtype=float),
+                    where=capacity_vec > 0,
+                )
+            utilization = float(ratios.max()) if ratios.size else 0.0
 
             header = f"Type {bin_info.bin_type}"
             ax.text(
@@ -341,6 +349,16 @@ def visualize_schedule(
                 va="bottom",
                 fontsize=9,
                 color="#555555",
+            )
+            util_text = f"Util: {utilization * 100:.1f}%"
+            ax.text(
+                x0 + bin_width / 2,
+                y0 + bin_height + 0.5,
+                util_text,
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                color="#444444",
             )
 
             placement_items = []
