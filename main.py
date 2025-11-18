@@ -2,39 +2,46 @@ from __future__ import annotations
 
 import numpy as np
 
-from algorithms import first_fit, first_fit_decreasing, machines_upper_bound
+from algorithms import (
+    schedule_jobs,
+)
 
 
-def example():
-    C = np.array([[10, 15], [8, 12]], dtype=float)
-    R = np.array([[4, 6], [3, 4]], dtype=float)
-
-    purchase_costs = np.array([5.0, 7.0])
-    opening_costs = np.array([1.0, 1.5])
-    L = np.array([2, 3])
-
-    upper_bound = machines_upper_bound(C, R, L)
-    print(f"Upper bound on machines per type: {upper_bound}")
-    print("-" * 60)
-
-    ff_result = first_fit(C, R, purchase_costs, opening_costs, L)
-    print("First-fit")
-    print(ff_result)
-
-    print("-" * 60)
-
-    ff_preopened = first_fit(
-        C, R, purchase_costs, opening_costs, L, opened_bins=upper_bound
+def main():
+    C = np.array(
+        [
+            [12, 15, 18, 10],
+            [10, 14, 18, 12],
+        ],
+        dtype=float,
     )
-    print("First-fit with pre-opened bins (upper bound)")
-    print(ff_preopened)
+    R = np.array(
+        [
+            [4, 6, 5, 9],
+            [3, 5, 7, 6],
+        ],
+        dtype=float,
+    )
 
-    print("-" * 60)
+    purchase_costs = np.array([6.0, 9.0, 12.0, 15.0])
+    running_costs = np.array([1.5, 2.0, 2.5, 3.0])
 
-    ffd_result = first_fit_decreasing(C, R, purchase_costs, opening_costs, L)
-    print("First-fit decreasing:", ffd_result.total_cost)
-    print(ffd_result)
+    # Six time slots with counts per job type.
+    L = np.array(
+        [
+            [3, 1, 0, 2],
+            [4, 2, 1, 0],
+            [2, 3, 2, 1],
+            [1, 0, 3, 2],
+            [5, 2, 2, 1],
+            [0, 4, 1, 3],
+        ]
+    )
+
+    schedule = schedule_jobs(C, R, L, purchase_costs, running_costs)
+    print("Schedule cost:", schedule.total_cost)
+    print("Machine vector:", schedule.machine_vector)
 
 
 if __name__ == "__main__":
-    example()
+    main()
