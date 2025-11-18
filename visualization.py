@@ -6,7 +6,8 @@ from typing import List, Sequence, Tuple
 
 import numpy as np
 
-from algorithms import BinInfo, ScheduleResult
+from algorithms import ScheduleResult
+from packing import BinInfo
 
 
 @dataclass
