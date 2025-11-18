@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from algorithms import _bin_utilization, schedule_jobs
+from algorithms import schedule_jobs
 from visualization import visualize_schedule
 
 

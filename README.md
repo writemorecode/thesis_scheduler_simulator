@@ -17,4 +17,4 @@ The example in `main.py` demonstrates how to structure the input matrices:
 - `opened_bins` (optional): length-`M` vector with how many bins of each type are
   already open; their purchase + opening costs are charged immediately.
 
-Import `first_fit` to use the simulator inside your own scripts.
+Import `first_fit_decreasing` to use the simulator inside your own scripts.

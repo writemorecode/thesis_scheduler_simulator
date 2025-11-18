@@ -182,10 +182,12 @@ def first_fit_decreasing(
     opened_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
     """
-    Run first-fit after sorting item requirements per dimension in non-increasing order.
+    Run first-fit after sorting job types in non-increasing order of resource demand.
 
-    The sorting uses ``np.sort`` (ascending) followed by ``np.fliplr`` to flip the
-    columns, yielding a decreasing order for each row.
+    Job requirement columns and their corresponding counts are permuted in tandem using
+    a lexicographic ordering on the resource dimensions so that larger jobs are packed
+    before smaller ones. The returned bin contents are mapped back to the original job
+    ordering before being returned.
 
     Parameters mirror :func:`first_fit`; ``opened_bins`` is forwarded directly without
     modification.
@@ -201,9 +203,29 @@ def first_fit_decreasing(
             f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
         )
 
-    # Sort ascending along each row (dimension) then flip columns for decreasing order.
-    R_sorted = np.fliplr(np.sort(R_array.copy(), axis=1))
+    _, J = R_array.shape
+    if J == 0:
+        sorted_indices = np.arange(J, dtype=int)
+        R_sorted = R_array.copy()
+        L_sorted = L_array.copy()
+    else:
+        if R_array.shape[0] == 0:
+            sorted_indices = np.arange(J, dtype=int)
+        else:
+            sort_keys = -R_array[::-1, :]
+            sorted_indices = np.lexsort(sort_keys)
 
-    return first_fit(
-        C, R_sorted, purchase_costs, opening_costs, L_array, opened_bins=opened_bins
+        R_sorted = R_array[:, sorted_indices]
+        L_sorted = L_array[sorted_indices]
+
+    result = first_fit(
+        C, R_sorted, purchase_costs, opening_costs, L_sorted, opened_bins=opened_bins
     )
+
+    if J > 0:
+        inverse_perm = np.empty_like(sorted_indices)
+        inverse_perm[sorted_indices] = np.arange(J)
+        for bin_info in result.bins:
+            bin_info.item_counts = bin_info.item_counts[inverse_perm]
+
+    return result

@@ -5,7 +5,7 @@ from typing import List, Sequence, Tuple
 
 import numpy as np
 
-from packing import BinInfo, first_fit
+from packing import BinInfo, first_fit_decreasing
 
 
 @dataclass
@@ -133,7 +133,7 @@ def _ffd_single_machine_type(
     capacity: np.ndarray, requirements: np.ndarray, job_counts: np.ndarray
 ) -> int:
     """
-    Wrapper that runs ``first_fit`` for a single bin type.
+    Wrapper that runs ``first_fit_decreasing`` for a single bin type.
 
     Parameters
     ----------
@@ -166,7 +166,7 @@ def _ffd_single_machine_type(
     purchase_costs = np.zeros(1)
     opening_costs = np.zeros(1)
 
-    result = first_fit(
+    result = first_fit_decreasing(
         C=cap_vec,
         R=req,
         purchase_costs=purchase_costs,
@@ -325,7 +325,7 @@ def _pack_time_slot_jobs(
             )
 
     zeros = np.zeros(M, dtype=float)
-    result = first_fit(
+    result = first_fit_decreasing(
         capacities,
         requirements,
         purchase_costs=zeros,
