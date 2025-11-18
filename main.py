@@ -6,6 +6,46 @@ from algorithms import (
     schedule_jobs,
 )
 
+from visualization import visualize_schedule
+
+
+def example_2d():
+    C = np.array(
+        [
+            [12, 15, 18, 10],
+            [10, 14, 18, 12],
+        ],
+        dtype=float,
+    )
+    R = np.array(
+        [
+            [4, 6, 5, 9],
+            [3, 5, 7, 6],
+        ],
+        dtype=float,
+    )
+
+    purchase_costs = np.array([6.0, 9.0, 12.0, 15.0])
+    running_costs = np.array([1.5, 2.0, 2.5, 3.0])
+
+    # Six time slots with counts per job type.
+    L = np.array(
+        [
+            [3, 1, 0, 2],
+            [4, 2, 1, 0],
+            [2, 3, 2, 1],
+            [1, 0, 3, 2],
+            [5, 2, 2, 1],
+            [0, 4, 1, 3],
+        ]
+    )
+    schedule = schedule_jobs(C, R, L, purchase_costs, running_costs)
+    print("Schedule cost:", schedule.total_cost)
+    print("Machine vector:", schedule.machine_vector)
+
+    viz = visualize_schedule(schedule, C, R, "out.png")
+    print(viz)
+
 
 def main():
     # Five resource dimensions (e.g., CPU/GPU/memory/storage/network) and four machine types.
@@ -52,4 +92,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    example_2d()
