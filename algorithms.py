@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections import Counter
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Sequence, Tuple
 
 import numpy as np
@@ -689,7 +690,6 @@ def schedule_jobs(
     total_cost, machine_vector = _solution_cost(
         time_slot_solutions, purchase_costs, running_costs
     )
-    print(f"Initial cost: {total_cost}")
 
     current_signature = _solution_signature(time_slot_solutions)
     seen_solutions = {current_signature}
@@ -727,7 +727,6 @@ def schedule_jobs(
         if neighbor_cost < total_cost:
             time_slot_solutions = neighbor_solutions
             total_cost = neighbor_cost
-            print(f"Current cost: {total_cost}")
             machine_vector = neighbor_machine_vector
             seen_solutions.add(neighbor_signature)
             current_signature = neighbor_signature
