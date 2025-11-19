@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
+from os import PathLike
 from typing import List, Sequence, Tuple
 
 import numpy as np
@@ -100,6 +102,37 @@ class ScheduleResult:
                     lines.append(f"      Items: {items_str}")
 
         return "\n".join(lines)
+
+
+def dump_schedule_to_csv(
+    schedule: ScheduleResult, output_path: str | PathLike[str]
+) -> None:
+    """Write per-machine assignment information for ``schedule`` to ``output_path``."""
+
+    job_type_count = 0
+    for slot in schedule.time_slot_solutions:
+        for bin_info in slot.bins:
+            if bin_info.item_counts.size > job_type_count:
+                job_type_count = int(bin_info.item_counts.size)
+
+    headers = ["time_slot", "machine_type"] + [
+        f"job_{idx}" for idx in range(job_type_count)
+    ]
+
+    with open(output_path, "w", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(headers)
+
+        for slot_idx, slot in enumerate(schedule.time_slot_solutions):
+            # Rows are emitted in slot order to keep rows grouped by time slot.
+            for bin_info in slot.bins:
+                raw_counts = bin_info.item_counts.reshape(-1)
+                row = [slot_idx, int(bin_info.bin_type)]
+                row.extend(
+                    int(raw_counts[idx]) if idx < raw_counts.size else 0
+                    for idx in range(job_type_count)
+                )
+                writer.writerow(row)
 
 
 def _pareto_non_dominated(time_slots: np.ndarray) -> np.ndarray:
