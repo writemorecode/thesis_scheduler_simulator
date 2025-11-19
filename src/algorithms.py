@@ -43,6 +43,32 @@ class ScheduleResult:
     upper_bound: np.ndarray
     time_slot_solutions: List[TimeSlotSolution]
 
+    def average_remaining_capacity(self) -> np.ndarray:
+        """
+        Average the remaining-capacity vectors across all used bins.
+
+        Returns
+        -------
+        np.ndarray
+            Length-K vector with the mean remaining capacity per resource.
+            Returns an empty vector when no bins are active.
+        """
+
+        total_remaining: np.ndarray | None = None
+        bin_count = 0
+        for slot in self.time_slot_solutions:
+            for bin_info in slot.bins:
+                remaining = np.asarray(bin_info.remaining_capacity, dtype=float)
+                if total_remaining is None:
+                    total_remaining = np.zeros_like(remaining, dtype=float)
+                total_remaining += remaining
+                bin_count += 1
+
+        if total_remaining is None or bin_count == 0:
+            return np.zeros(0, dtype=float)
+
+        return (total_remaining / bin_count).reshape(-1)
+
     def __str__(self) -> str:
         def _format_vector(vec: np.ndarray) -> str:
             flat = np.asarray(vec).reshape(-1)
