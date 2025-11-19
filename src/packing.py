@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import List, Sequence
+from typing import Callable, List, Sequence
 
 import numpy as np
 
@@ -42,6 +42,9 @@ class BinPackingResult:
         return f"{cost_text}\n{bins_text}"
 
 
+BinSelectionFn = Callable[[int, np.ndarray], int]
+
+
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
     arr = np.asarray(vec, dtype=float).reshape(-1)
     if arr.shape[0] != length:
@@ -56,6 +59,7 @@ def first_fit(
     opening_costs: np.ndarray,
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
+    bin_selection_fn: BinSelectionFn | None = None,
 ) -> BinPackingResult:
     """
     Run the first-fit heterogeneous multidimensional bin packing heuristic.
@@ -75,6 +79,11 @@ def first_fit(
     opened_bins : array-like of shape (M,), optional
         Pre-opened bin counts per type. These bins are available before packing starts
         and their purchase+opening cost is charged up front.
+    bin_selection_fn : Callable[[int, np.ndarray], int], optional
+        Function that chooses which bin type to open when none of the existing bins fit.
+        Receives the item type index and the capacity matrix ``C`` and should return the
+        index of the bin type to open. Defaults to selecting the first bin type that can
+        accommodate the item.
 
     Returns
     -------
@@ -137,6 +146,17 @@ def first_fit(
             for _ in range(int(count)):
                 _create_bin(bin_type)
 
+    def _default_bin_selection(item_type: int, capacity_matrix: np.ndarray) -> int:
+        demand_vec = R[:, [item_type]]
+        for candidate in range(M):
+            if np.all(capacity_matrix[:, [candidate]] >= demand_vec):
+                return candidate
+        raise ValueError(
+            f"Item type {item_type} does not fit in any available bin type."
+        )
+
+    select_bin_type = bin_selection_fn or _default_bin_selection
+
     for j in range(J):
         demand = R[:, [j]]
         if np.any(demand < 0):
@@ -156,19 +176,19 @@ def first_fit(
             if placed:
                 continue
 
-            for bin_type in range(M):
-                if np.all(C[:, [bin_type]] >= demand):
-                    bin_info = _create_bin(bin_type)
-                    total_cost += float(per_bin_costs[bin_type])
-                    bin_info.remaining_capacity -= demand
-                    bin_info.item_counts[j] += 1
-                    placed = True
-                    break
-
-            if not placed:
+            bin_type = select_bin_type(j, C)
+            if not (0 <= bin_type < M):
                 raise ValueError(
-                    f"Item type {j} does not fit in any available bin type."
+                    f"Bin selection function returned invalid bin type {bin_type} for item type {j}."
                 )
+            if not np.all(C[:, [bin_type]] >= demand):
+                raise ValueError(
+                    f"Bin selection function chose type {bin_type}, but item type {j} does not fit in it."
+                )
+            bin_info = _create_bin(bin_type)
+            total_cost += float(per_bin_costs[bin_type])
+            bin_info.remaining_capacity -= demand
+            bin_info.item_counts[j] += 1
 
     return BinPackingResult(total_cost=total_cost, bins=bins)
 
@@ -180,6 +200,7 @@ def first_fit_decreasing(
     opening_costs: np.ndarray,
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
+    bin_selection_fn: BinSelectionFn | None = None,
 ) -> BinPackingResult:
     """
     Run first-fit after sorting job types in non-increasing order of resource demand.
@@ -189,8 +210,8 @@ def first_fit_decreasing(
     before smaller ones. The returned bin contents are mapped back to the original job
     ordering before being returned.
 
-    Parameters mirror :func:`first_fit`; ``opened_bins`` is forwarded directly without
-    modification.
+    Parameters mirror :func:`first_fit`; ``opened_bins`` and ``bin_selection_fn`` are
+    forwarded directly without modification.
     """
 
     R_array = np.asarray(R, dtype=float)
@@ -219,7 +240,13 @@ def first_fit_decreasing(
         L_sorted = L_array[sorted_indices]
 
     result = first_fit(
-        C, R_sorted, purchase_costs, opening_costs, L_sorted, opened_bins=opened_bins
+        C,
+        R_sorted,
+        purchase_costs,
+        opening_costs,
+        L_sorted,
+        opened_bins=opened_bins,
+        bin_selection_fn=bin_selection_fn,
     )
 
     if J > 0:
