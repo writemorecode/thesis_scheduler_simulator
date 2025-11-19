@@ -591,6 +591,8 @@ def schedule_jobs(
     total_cost, machine_vector = _solution_cost(
         time_slot_solutions, purchase_costs, running_costs
     )
+    print("Initial machine vector:", machine_vector)
+    print("Initial cost:", total_cost)
 
     current_signature = _solution_signature(time_slot_solutions)
     seen_solutions = {current_signature}
@@ -607,6 +609,9 @@ def schedule_jobs(
         neighbor_cost, neighbor_machine_vector = _solution_cost(
             neighbor_solutions, purchase_costs, running_costs
         )
+
+        print("Neighbor machine vector:", neighbor_machine_vector)
+        print("Neighbor cost:", neighbor_cost)
 
         if neighbor_signature in seen_solutions:
             break
@@ -633,6 +638,7 @@ def schedule_jobs(
         if neighbor_cost < total_cost:
             time_slot_solutions = neighbor_solutions
             total_cost = neighbor_cost
+            print("Machine vector:", machine_vector)
             machine_vector = neighbor_machine_vector
             seen_solutions.add(neighbor_signature)
             current_signature = neighbor_signature
