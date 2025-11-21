@@ -146,17 +146,22 @@ def first_fit(
             for _ in range(int(count)):
                 _create_bin(bin_type)
 
-    def _default_bin_selection(item_type: int, capacity_matrix: np.ndarray) -> int:
+    def _default_bin_selection(item_type: int, C: np.ndarray) -> int:
+        running_costs_sorted_indicies = np.argsort(opening_costs)
+        C_sorted = C[:, running_costs_sorted_indicies]
         demand_vec = R[:, [item_type]].reshape(-1, 1)
-        feasible_bin_types = np.all(C >= demand_vec, axis=0)
+        feasible_bin_types = np.all(C_sorted >= demand_vec, axis=0)
         if not np.any(feasible_bin_types):
             raise ValueError(
                 f"Item type {item_type} does not fit in any available bin type."
             )
-        best_bin_idx = np.argmin(feasible_bin_types)
-        assert np.all(C[:, best_bin_idx] >= demand_vec), "invalid bin type"
-        print(f"Bin candidate for item type {item_type}:", best_bin_idx)
-        return best_bin_idx
+        best_bin_type = np.argmax(feasible_bin_types)
+        bin_vector = C_sorted[:, best_bin_type].reshape(-1, 1)
+        if not np.all(bin_vector >= demand_vec):
+            raise ValueError(
+                f"Selected invalid bin type {best_bin_type} for item type {item_type}"
+            )
+        return running_costs_sorted_indicies[best_bin_type]
 
     select_bin_type = bin_selection_fn or _default_bin_selection
 
