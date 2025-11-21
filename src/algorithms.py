@@ -7,7 +7,42 @@ from typing import List, Sequence, Tuple
 
 import numpy as np
 
-from packing import BinInfo, first_fit_decreasing
+from packing import BinInfo as _BaseBinInfo, first_fit_decreasing
+
+
+class BinInfo(_BaseBinInfo):
+    """Extended bin info with convenience metrics."""
+
+    def utilization(self, requirements: np.ndarray) -> float:
+        """
+        Maximum utilization ratio across all resource dimensions.
+
+        Parameters
+        ----------
+        requirements : np.ndarray
+            ``(K, J)`` matrix describing resource demand per job type.
+        """
+
+        req = np.asarray(requirements, dtype=float)
+        if req.ndim != 2:
+            raise ValueError("requirements must be a 2D matrix.")
+
+        counts = np.asarray(self.item_counts, dtype=float).reshape(-1, 1)
+        if req.shape[1] != counts.shape[0]:
+            raise ValueError(
+                "requirements column count must match the size of item_counts."
+            )
+
+        load = req @ counts
+        remaining = np.asarray(self.remaining_capacity, dtype=float).reshape(-1, 1)
+        capacity = load + remaining
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratios = np.divide(
+                load, capacity, out=np.zeros_like(load), where=capacity > 0
+            )
+
+        return float(ratios.max()) if ratios.size else 0.0
 
 
 @dataclass
@@ -426,20 +461,6 @@ def _pack_all_time_slots(
     return solutions
 
 
-def _bin_utilization(bin_info: BinInfo, requirements: np.ndarray) -> float:
-    """Return the max per-dimension utilization for the bin."""
-
-    counts = bin_info.item_counts.reshape(-1, 1)
-    load = requirements @ counts
-    remaining = bin_info.remaining_capacity.reshape(-1, 1)
-    capacity = load + remaining
-
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ratios = np.divide(load, capacity, out=np.zeros_like(load), where=capacity > 0)
-
-    return float(ratios.max()) if ratios.size else 0.0
-
-
 def _sort_bins_by_utilization(
     bins: List[BinInfo],
     requirements: np.ndarray,
@@ -458,7 +479,7 @@ def _sort_bins_by_utilization(
         cost_component = (
             -float(cost_vector[bin_info.bin_type]) if cost_vector is not None else 0.0
         )
-        return (_bin_utilization(bin_info, requirements), cost_component)
+        return (bin_info.utilization(requirements), cost_component)
 
     bins.sort(key=_sort_key)
 
@@ -554,14 +575,14 @@ def repack_jobs(
             if int(np.sum(source.item_counts)) == 0:
                 continue
 
-            source_util = _bin_utilization(source, requirements)
+            source_util = source.utilization(requirements)
             job_sequence = _sorted_jobs_for_bin(source, requirements)
 
             for dest_idx in range(len(bins) - 1, source_idx, -1):
                 dest = bins[dest_idx]
                 if dest is source:
                     continue
-                dest_util = _bin_utilization(dest, requirements)
+                dest_util = dest.utilization(requirements)
                 if dest_util <= source_util:
                     continue
 

@@ -6,8 +6,7 @@ from typing import List, Sequence, Tuple
 
 import numpy as np
 
-from algorithms import ScheduleResult
-from packing import BinInfo
+from algorithms import BinInfo, ScheduleResult
 
 
 @dataclass
@@ -301,14 +300,7 @@ def visualize_schedule(
             capacity_vec = capacities[:, bin_info.bin_type].astype(float).reshape(-1)
             usage = (requirements @ bin_info.item_counts.reshape(-1, 1)).reshape(-1)
             remaining = bin_info.remaining_capacity.reshape(-1)
-            with np.errstate(divide="ignore", invalid="ignore"):
-                ratios = np.divide(
-                    usage,
-                    capacity_vec,
-                    out=np.zeros_like(usage, dtype=float),
-                    where=capacity_vec > 0,
-                )
-            utilization = float(ratios.max()) if ratios.size else 0.0
+            utilization = bin_info.utilization(requirements)
 
             header = f"Type {bin_info.bin_type}"
             ax.text(
