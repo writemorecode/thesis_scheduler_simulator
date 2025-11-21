@@ -82,8 +82,8 @@ def first_fit(
     bin_selection_fn : Callable[[int, np.ndarray], int], optional
         Function that chooses which bin type to open when none of the existing bins fit.
         Receives the item type index and the capacity matrix ``C`` and should return the
-        index of the bin type to open. Defaults to selecting the first bin type that can
-        accommodate the item.
+        index of the bin type to open. Defaults to selecting the cheapest (by opening
+        cost) bin type that can accommodate the item.
 
     Returns
     -------
@@ -147,13 +147,16 @@ def first_fit(
                 _create_bin(bin_type)
 
     def _default_bin_selection(item_type: int, capacity_matrix: np.ndarray) -> int:
-        demand_vec = R[:, [item_type]]
-        for candidate in range(M):
-            if np.all(capacity_matrix[:, [candidate]] >= demand_vec):
-                return candidate
-        raise ValueError(
-            f"Item type {item_type} does not fit in any available bin type."
-        )
+        demand_vec = R[:, [item_type]].reshape(-1, 1)
+        feasible_bin_types = np.all(C >= demand_vec, axis=0)
+        if not np.any(feasible_bin_types):
+            raise ValueError(
+                f"Item type {item_type} does not fit in any available bin type."
+            )
+        best_bin_idx = np.argmin(feasible_bin_types)
+        assert np.all(C[:, best_bin_idx] >= demand_vec), "invalid bin type"
+        print(f"Bin candidate for item type {item_type}:", best_bin_idx)
+        return best_bin_idx
 
     select_bin_type = bin_selection_fn or _default_bin_selection
 
