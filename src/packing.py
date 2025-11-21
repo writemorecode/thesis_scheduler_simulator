@@ -169,9 +169,10 @@ def first_fit(
             for _ in range(int(count)):
                 _create_bin(bin_type)
 
+    running_costs_sorted_indicies = np.argsort(opening_costs)
+    C_sorted = C[:, running_costs_sorted_indicies]
+
     def _default_bin_selection(item_type: int, C: np.ndarray) -> int:
-        running_costs_sorted_indicies = np.argsort(opening_costs)
-        C_sorted = C[:, running_costs_sorted_indicies]
         demand_vec = R[:, [item_type]].reshape(-1, 1)
         feasible_bin_types = np.all(C_sorted >= demand_vec, axis=0)
         if not np.any(feasible_bin_types):
