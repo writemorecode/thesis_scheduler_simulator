@@ -27,22 +27,12 @@ class BinInfo(_BaseBinInfo):
         if req.ndim != 2:
             raise ValueError("requirements must be a 2D matrix.")
 
-        counts = np.asarray(self.item_counts, dtype=float).reshape(-1, 1)
-        if req.shape[1] != counts.shape[0]:
+        if req.shape[1] != np.asarray(self.item_counts).reshape(-1).shape[0]:
             raise ValueError(
                 "requirements column count must match the size of item_counts."
             )
 
-        load = req @ counts
-        remaining = np.asarray(self.remaining_capacity, dtype=float).reshape(-1, 1)
-        capacity = load + remaining
-
-        with np.errstate(divide="ignore", invalid="ignore"):
-            ratios = np.divide(
-                load, capacity, out=np.zeros_like(load), where=capacity > 0
-            )
-
-        return float(ratios.max()) if ratios.size else 0.0
+        return float(self._cached_utilization)
 
 
 @dataclass
@@ -596,6 +586,8 @@ def repack_jobs(
                         source.item_counts[job_type] -= 1
                         dest.remaining_capacity -= demand
                         dest.item_counts[job_type] += 1
+                        source.update_utilization_cache()
+                        dest.update_utilization_cache()
                         job_moved = True
                         moved = True
                         break

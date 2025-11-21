@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, List, Sequence
 
 import numpy as np
@@ -15,6 +15,10 @@ class BinInfo:
     capacity: np.ndarray
     remaining_capacity: np.ndarray
     item_counts: np.ndarray
+    _cached_utilization: float = field(init=False, repr=False, default=0.0)
+
+    def __post_init__(self) -> None:
+        self.update_utilization_cache()
 
     def __str__(self) -> str:
         parts = [
@@ -24,6 +28,25 @@ class BinInfo:
             f"Item counts:\n{self.item_counts}",
         ]
         return "\n".join(parts)
+
+    def _compute_utilization(self) -> float:
+        """Maximum utilization across resources based on capacity usage."""
+
+        capacity = np.asarray(self.capacity, dtype=float).reshape(-1, 1)
+        remaining = np.asarray(self.remaining_capacity, dtype=float).reshape(-1, 1)
+        load = capacity - remaining
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratios = np.divide(
+                load, capacity, out=np.zeros_like(load), where=capacity > 0
+            )
+
+        return float(ratios.max()) if ratios.size else 0.0
+
+    def update_utilization_cache(self) -> None:
+        """Refresh cached utilization after bin contents change."""
+
+        self._cached_utilization = self._compute_utilization()
 
 
 @dataclass
@@ -178,6 +201,7 @@ def first_fit(
                 if np.all(bin_info.remaining_capacity >= demand):
                     bin_info.remaining_capacity -= demand
                     bin_info.item_counts[j] += 1
+                    bin_info.update_utilization_cache()
                     placed = True
                     break
 
@@ -197,6 +221,7 @@ def first_fit(
             total_cost += float(per_bin_costs[bin_type])
             bin_info.remaining_capacity -= demand
             bin_info.item_counts[j] += 1
+            bin_info.update_utilization_cache()
 
     return BinPackingResult(total_cost=total_cost, bins=bins)
 

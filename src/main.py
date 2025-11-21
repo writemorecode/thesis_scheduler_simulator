@@ -5,6 +5,7 @@ import time
 from algorithms import schedule_jobs
 from problem_generation import generate_random_instance
 
+
 def main():
     K, J, M, T = 5, 10, 4, 100
     problem = generate_random_instance(K=K, J=J, M=M, T=T)
@@ -25,6 +26,7 @@ def main():
     print(f"Total cost: {schedule.total_cost}")
     print(f"Machines: {schedule.machine_vector}")
     print(f"Execution time: {delta} sec.")
+
 
 if __name__ == "__main__":
     main()
