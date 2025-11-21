@@ -131,6 +131,9 @@ def first_fit(
             f"Bin and item matrices must have the same number of rows (dimensions). Got {K} and {K_items}."
         )
 
+    if not np.all(R >= 0):
+        raise ValueError("All job demand values must be non-negative")
+
     purchase_costs = _prepare_vector(purchase_costs, M, "purchase_costs")
     opening_costs = _prepare_vector(opening_costs, M, "opening_costs")
     L = np.asarray(L, dtype=int).reshape(-1)
@@ -191,10 +194,6 @@ def first_fit(
 
     for j in range(J):
         demand = R[:, [j]]
-        if np.any(demand < 0):
-            raise ValueError(
-                f"Item requirements cannot be negative. Found negative entries in item type {j}."
-            )
 
         for _ in range(int(L[j])):
             placed = False
