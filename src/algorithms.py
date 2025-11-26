@@ -842,8 +842,63 @@ def _solution_signature(
     return tuple(slot_entries)
 
 
+def _maybe_downsize_bin(
+    bin_info: BinInfo,
+    capacities: np.ndarray,
+    requirements: np.ndarray,
+    running_costs: np.ndarray,
+) -> bool:
+    """
+    Try to swap a bin to a smaller/cheaper type that still fits its contents.
+
+    Returns True if the bin type was changed.
+    """
+
+    if int(np.sum(bin_info.item_counts)) == 0:
+        return False
+
+    load = requirements @ bin_info.item_counts.reshape(-1, 1)
+    current_type = int(bin_info.bin_type)
+    current_capacity = capacities[:, [current_type]]
+    current_cost = float(running_costs[current_type])
+    current_size = float(np.sum(current_capacity))
+
+    best_type = None
+    best_key = None
+    for candidate_type in range(capacities.shape[1]):
+        if candidate_type == current_type:
+            continue
+
+        candidate_capacity = capacities[:, [candidate_type]]
+        if np.any(load > candidate_capacity):
+            continue
+
+        candidate_cost = float(running_costs[candidate_type])
+        candidate_size = float(np.sum(candidate_capacity))
+
+        # Require some improvement: either cheaper to run or strictly smaller.
+        if candidate_cost >= current_cost and candidate_size >= current_size:
+            continue
+
+        key = (candidate_cost, candidate_size)
+        if best_key is None or key < best_key:
+            best_key = key
+            best_type = candidate_type
+
+    if best_type is None:
+        return False
+
+    new_capacity = capacities[:, [best_type]].copy()
+    bin_info.bin_type = best_type
+    bin_info.capacity = new_capacity
+    bin_info.remaining_capacity = new_capacity - load
+    bin_info.update_utilization_cache()
+    return True
+
+
 def repack_jobs(
     slot_solution: TimeSlotSolution,
+    capacities: np.ndarray,
     requirements: np.ndarray,
     running_costs: np.ndarray,
 ) -> TimeSlotSolution:
@@ -853,13 +908,28 @@ def repack_jobs(
     Jobs are iteratively moved from the least utilized bin to bins with higher
     utilization (breaking ties by per-time-slot running cost). When a bin becomes
     empty it is removed, which reduces the powered-on machine count for the slot.
+    After moving items out of a source bin, the remaining contents are also checked
+    to see if they fit in a cheaper/smaller bin type; if so, the bin is downsized
+    and its capacity/remaining state is updated.
     """
 
     if not slot_solution.bins:
         return slot_solution.copy()
 
+    capacities = np.asarray(capacities, dtype=float)
     requirements = np.asarray(requirements, dtype=float)
     running_costs = np.asarray(running_costs, dtype=float).reshape(-1)
+
+    if capacities.ndim != 2:
+        raise ValueError("capacities must be a 2D matrix.")
+    if capacities.shape[0] != requirements.shape[0]:
+        raise ValueError(
+            "capacities and requirements must have the same number of resource dimensions."
+        )
+    if capacities.shape[1] != running_costs.shape[0]:
+        raise ValueError(
+            "running_costs length must match the number of machine types in capacities."
+        )
 
     bins: List[BinInfo] = [
         BinInfo(
@@ -905,6 +975,11 @@ def repack_jobs(
                         dest.update_utilization_cache()
                         job_moved = True
                         moved = True
+
+                        if int(np.sum(source.item_counts)) > 0:
+                            _maybe_downsize_bin(
+                                source, capacities, requirements, running_costs
+                            )
                         break
 
                 if int(np.sum(source.item_counts)) == 0:
@@ -1003,7 +1078,7 @@ def schedule_jobs(
 
     for _ in range(max_iterations):
         neighbor_solutions = [
-            repack_jobs(slot, requirements, running_costs)
+            repack_jobs(slot, capacities, requirements, running_costs)
             for slot in time_slot_solutions
         ]
         neighbor_signature = _solution_signature(neighbor_solutions)
@@ -1108,7 +1183,7 @@ def schedule_jobs_marginal_cost(
 
     for _ in range(max_iterations):
         neighbor_solutions = [
-            repack_jobs(slot, requirements, running_costs)
+            repack_jobs(slot, capacities, requirements, running_costs)
             for slot in time_slot_solutions
         ]
         neighbor_signature = _solution_signature(neighbor_solutions)
