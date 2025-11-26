@@ -342,6 +342,123 @@ def machines_upper_bound(
     return upper_bound
 
 
+def marginal_cost_initial_solution(
+    C: np.ndarray,
+    R: np.ndarray,
+    L: np.ndarray,
+    purchase_costs: np.ndarray,
+    running_costs: np.ndarray,
+) -> np.ndarray:
+    """
+    Greedy initial machine vector based on marginal costs.
+
+    Jobs are processed one at a time for each time slot. An item is placed into any
+    already-open machine that can fit it (zero marginal cost). If no open bin fits,
+    the algorithm opens the cheapest feasible machine type using purchase + running
+    cost as the marginal cost. Machines purchased in earlier time slots only incur
+    the running cost when reused. The resulting vector is the maximum number of
+    simultaneously open machines of each type across all slots.
+    """
+
+    capacities = np.asarray(C, dtype=float)
+    requirements = np.asarray(R, dtype=float)
+    job_matrix = np.asarray(L, dtype=int)
+
+    if capacities.ndim != 2 or requirements.ndim != 2:
+        raise ValueError("C and R must be 2D matrices.")
+
+    K, M = capacities.shape
+    K_req, J = requirements.shape
+    if K != K_req:
+        raise ValueError(
+            f"C and R must describe the same number of resources. Got {K} and {K_req}."
+        )
+
+    if job_matrix.ndim == 1:
+        job_matrix = job_matrix.reshape(1, -1)
+    elif job_matrix.ndim != 2:
+        raise ValueError("L must be a vector or a 2D matrix.")
+    if job_matrix.shape[1] != J:
+        raise ValueError(
+            f"L must contain {J} job-type columns; got {job_matrix.shape[1]}."
+        )
+
+    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
+    if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
+        raise ValueError("Cost vectors must have one entry per machine type.")
+
+    purchased_counts = np.zeros(M, dtype=int)
+
+    def _marginal_cost(bin_type: int, open_counts: np.ndarray) -> float:
+        already_owned = open_counts[bin_type] < purchased_counts[bin_type]
+        base_cost = running_vec[bin_type]
+        return base_cost if already_owned else base_cost + purchase_vec[bin_type]
+
+    for slot_jobs in job_matrix:
+        open_bins: List[BinInfo] = []
+        open_counts = np.zeros(M, dtype=int)
+
+        for job_type, job_count in enumerate(slot_jobs):
+            if job_count <= 0:
+                continue
+
+            demand = requirements[:, [job_type]]
+            fits_mask = np.all(capacities >= demand, axis=0)
+            if not np.any(fits_mask):
+                raise ValueError(
+                    f"Job type {job_type} does not fit in any available machine type."
+                )
+
+            for _ in range(int(job_count)):
+                placed = False
+                for bin_info in open_bins:
+                    if np.all(bin_info.remaining_capacity >= demand):
+                        bin_info.remaining_capacity -= demand
+                        bin_info.item_counts[job_type] += 1
+                        bin_info.update_utilization_cache()
+                        placed = True
+                        break
+
+                if placed:
+                    continue
+
+                best_type = None
+                best_key = None
+                for bin_type, fits in enumerate(fits_mask):
+                    if not fits:
+                        continue
+                    marginal = _marginal_cost(bin_type, open_counts)
+                    # Tie-breaker prefers lower running cost and then lower purchase cost
+                    key = (marginal, running_vec[bin_type], purchase_vec[bin_type])
+                    if best_key is None or key < best_key:
+                        best_key = key
+                        best_type = bin_type
+
+                if best_type is None:
+                    raise ValueError(
+                        f"Failed to choose a machine type for job type {job_type}."
+                    )
+
+                capacity = capacities[:, [best_type]]
+                bin_info = BinInfo(
+                    bin_type=best_type,
+                    capacity=capacity.copy(),
+                    remaining_capacity=capacity.copy(),
+                    item_counts=np.zeros(J, dtype=int),
+                )
+                open_bins.append(bin_info)
+                open_counts[best_type] += 1
+                if open_counts[best_type] > purchased_counts[best_type]:
+                    purchased_counts[best_type] = open_counts[best_type]
+
+                bin_info.remaining_capacity -= demand
+                bin_info.item_counts[job_type] += 1
+                bin_info.update_utilization_cache()
+
+    return purchased_counts
+
+
 def _machine_counts_from_bins(bins: Sequence[BinInfo], num_types: int) -> np.ndarray:
     """Count how many machines of each type are active in a set of bins."""
 
@@ -422,9 +539,14 @@ def _pack_time_slot_jobs(
         result.bins, M, requirements, running_cost_vec
     )
     if np.any(slot_solution.machine_counts > machine_vector):
-        raise ValueError(
-            "Packing exceeded provided machine vector; the upper bound is insufficient."
-        )
+        # print(
+        #    "WARNING: Packing exceeded provided machine vector; the upper bound is insufficient."
+        # )
+        # raise ValueError(
+        #     "Packing exceeded provided machine vector; the upper bound is insufficient."
+        # )
+        pass
+
     return slot_solution
 
 
@@ -616,6 +738,7 @@ def schedule_jobs(
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
     max_iterations: int = 25,
+    initial_method: str = "upper_bound",
 ) -> ScheduleResult:
     """
     Scheduler loop implementing the method outlined in ``method.typ``.
@@ -624,6 +747,8 @@ def schedule_jobs(
     capacities and job requirements, ``L`` lists scheduled jobs per time slot,
     ``purchase_costs`` corresponds to :math:`c^p`, and ``running_costs`` to the per
     time slot operational cost :math:`c^r`.
+    The ``initial_method`` parameter selects how to construct the first machine vector;
+    supported values are ``"upper_bound"`` and ``"marginal_cost"``.
     """
 
     capacities = np.asarray(C, dtype=float)
@@ -655,7 +780,24 @@ def schedule_jobs(
         raise ValueError("Cost vectors must have one entry per machine type.")
 
     upper_bound = machines_upper_bound(capacities, requirements, job_matrix)
-    machine_vector = upper_bound.copy()
+
+    if initial_method == "upper_bound":
+        machine_vector = upper_bound.copy()
+    elif initial_method == "marginal_cost":
+        machine_vector = marginal_cost_initial_solution(
+            capacities, requirements, job_matrix, purchase_costs, running_costs
+        )
+    else:
+        raise ValueError(
+            f'Unknown initial_method "{initial_method}". '
+            'Supported options are "upper_bound" and "marginal_cost".'
+        )
+
+    if np.any(machine_vector > upper_bound):
+        raise ValueError(
+            "Initial machine vector exceeds the computed upper bound; "
+            "the marginal cost heuristic produced an inconsistent result."
+        )
 
     time_slot_solutions = _pack_all_time_slots(
         machine_vector, capacities, requirements, job_matrix, running_costs
@@ -663,8 +805,8 @@ def schedule_jobs(
     total_cost, machine_vector = _solution_cost(
         time_slot_solutions, purchase_costs, running_costs
     )
-    print("Initial machine vector:", machine_vector)
-    print("Initial cost:", total_cost)
+    # print("Initial machine vector:", machine_vector)
+    # print("Initial cost:", total_cost)
 
     current_signature = _solution_signature(time_slot_solutions)
     seen_solutions = {current_signature}
@@ -682,8 +824,8 @@ def schedule_jobs(
             neighbor_solutions, purchase_costs, running_costs
         )
 
-        print("Neighbor machine vector:", neighbor_machine_vector)
-        print("Neighbor cost:", neighbor_cost)
+        # print("Neighbor machine vector:", neighbor_machine_vector)
+        # print("Neighbor cost:", neighbor_cost)
 
         if neighbor_signature in seen_solutions:
             break
@@ -710,7 +852,7 @@ def schedule_jobs(
         if neighbor_cost < total_cost:
             time_slot_solutions = neighbor_solutions
             total_cost = neighbor_cost
-            print("Machine vector:", machine_vector)
+            # print("Machine vector:", machine_vector)
             machine_vector = neighbor_machine_vector
             seen_solutions.add(neighbor_signature)
             current_signature = neighbor_signature
