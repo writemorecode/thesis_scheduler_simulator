@@ -905,28 +905,24 @@ def repack_jobs(
 
 
 def schedule_jobs(
-    C: np.ndarray,
-    R: np.ndarray,
-    L: np.ndarray,
-    purchase_costs: np.ndarray,
-    running_costs: np.ndarray,
+    problem: ProblemInstance,
     max_iterations: int = 25,
     initial_method: str = "upper_bound",
 ) -> ScheduleResult:
     """
     Scheduler loop implementing the method outlined in ``method.typ``.
 
-    Parameters mirror the notation in the paper: ``C`` and ``R`` describe machine
-    capacities and job requirements, ``L`` lists scheduled jobs per time slot,
-    ``purchase_costs`` corresponds to :math:`c^p`, and ``running_costs`` to the per
-    time slot operational cost :math:`c^r`.
-    The ``initial_method`` parameter selects how to construct the first machine vector;
-    supported values are ``"upper_bound"`` and ``"marginal_cost"``.
+    Parameters follow the fields in :class:`ProblemInstance`: ``capacities`` and
+    ``requirements`` describe machine capacities and job requirements, ``job_counts``
+    lists scheduled jobs per time slot, ``purchase_costs`` corresponds to
+    :math:`c^p`, and ``running_costs`` to the per time slot operational cost
+    :math:`c^r`. The ``initial_method`` parameter selects how to construct the first
+    machine vector; supported values are ``"upper_bound"`` and ``"marginal_cost"``.
     """
 
-    capacities = np.asarray(C, dtype=float)
-    requirements = np.asarray(R, dtype=float)
-    job_matrix = np.asarray(L, dtype=int)
+    capacities = np.asarray(problem.capacities, dtype=float)
+    requirements = np.asarray(problem.requirements, dtype=float)
+    job_matrix = np.asarray(problem.job_counts, dtype=int)
 
     if capacities.ndim != 2 or requirements.ndim != 2:
         raise ValueError("C and R must be 2D matrices.")

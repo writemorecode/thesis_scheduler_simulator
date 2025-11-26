@@ -7,7 +7,7 @@ import numpy as np
 
 
 @dataclass
-class RandomInstance:
+class ProblemInstance:
     """Container for a randomly generated, valid scheduling instance."""
 
     capacities: np.ndarray  # C shape: (K, M)
@@ -29,7 +29,7 @@ def generate_random_instance(
     job_count_range: Tuple[int, int] = (0, 6),
     purchase_cost_range: Tuple[int, int] = (4, 15),
     running_cost_range: Tuple[int, int] = (1, 10),
-) -> RandomInstance:
+) -> ProblemInstance:
     """
     Generate a valid random problem instance for the scheduler.
 
@@ -90,7 +90,7 @@ def generate_random_instance(
     purchase_costs = rng.integers(pc_low, pc_high + 1, size=M, dtype=int)
     running_costs = rng.integers(rc_low, rc_high + 1, size=M, dtype=int)
 
-    return RandomInstance(
+    return ProblemInstance(
         capacities=capacities.astype(float),
         requirements=requirements.astype(float),
         job_counts=job_counts,
