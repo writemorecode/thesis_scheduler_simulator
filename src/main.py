@@ -45,6 +45,7 @@ def main():
         seed = int(sys.argv[1])
     except IndexError:
         seed = np.random.randint(1_000_000)
+        print(f"SEED: {seed}")
 
     K, J, M, T = 5, 10, 6, 100
     # K, J, M, T = 2, 4, 4, 5
