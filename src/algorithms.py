@@ -7,6 +7,7 @@ from typing import List, Sequence, Tuple
 
 import numpy as np
 
+from problem_generation import ProblemInstance
 from packing import BinInfo as _BaseBinInfo, first_fit_decreasing
 
 
@@ -67,6 +68,178 @@ class ScheduleResult:
     machine_vector: np.ndarray
     upper_bound: np.ndarray
     time_slot_solutions: List[TimeSlotSolution]
+
+    def validate(
+        self,
+        problem: ProblemInstance,
+        *,
+        atol: float = 1e-9,
+    ) -> None:
+        """
+        Verify that this schedule respects capacity and job-count constraints.
+
+        Parameters mirror the fields consumed by :func:`schedule_jobs`. A
+        ``ValueError`` is raised as soon as an inconsistency is detected.
+        """
+
+        capacities = problem.capacities
+        requirements = problem.requirements
+        job_matrix = problem.job_counts
+        purchase_costs = problem.purchase_costs
+        running_costs = problem.running_costs
+
+        capacities = np.asarray(capacities, dtype=float)
+        requirements = np.asarray(requirements, dtype=float)
+        job_matrix = np.asarray(job_matrix, dtype=int)
+
+        if capacities.ndim != 2 or requirements.ndim != 2:
+            raise ValueError("capacities and requirements must be 2D matrices.")
+        if capacities.shape[0] != requirements.shape[0]:
+            raise ValueError(
+                "capacities and requirements must describe the same resource dimensions."
+            )
+        K, M = capacities.shape
+        _, J = requirements.shape
+
+        if job_matrix.ndim == 1:
+            job_matrix = job_matrix.reshape(1, -1)
+        elif job_matrix.ndim != 2:
+            raise ValueError("job_matrix must be a vector or a 2D matrix.")
+        if job_matrix.shape[1] != J:
+            raise ValueError(
+                f"job_matrix must have {J} job-type columns; got {job_matrix.shape[1]}."
+            )
+        if len(self.time_slot_solutions) != job_matrix.shape[0]:
+            raise ValueError(
+                "Number of time slots in the schedule does not match job_matrix rows."
+            )
+
+        purchase_vec = None
+        running_vec = None
+        if purchase_costs is not None:
+            purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
+            if purchase_vec.shape[0] != M:
+                raise ValueError(
+                    f"purchase_costs must have one entry per machine type ({M})."
+                )
+        if running_costs is not None:
+            running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
+            if running_vec.shape[0] != M:
+                raise ValueError(
+                    f"running_costs must have one entry per machine type ({M})."
+                )
+
+        expected_machine_vector = np.zeros(M, dtype=int)
+
+        for slot_idx, (slot, required_jobs) in enumerate(
+            zip(self.time_slot_solutions, job_matrix)
+        ):
+            machine_counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
+            if machine_counts.shape[0] != M:
+                raise ValueError(
+                    f"Slot {slot_idx} machine_counts length mismatch; expected {M}."
+                )
+            if np.any(machine_counts < 0):
+                raise ValueError(f"Slot {slot_idx} has negative machine counts.")
+
+            bin_counts = np.zeros(M, dtype=int)
+            assigned_jobs = np.zeros(J, dtype=int)
+
+            for bin_idx, bin_info in enumerate(slot.bins):
+                bin_type = int(bin_info.bin_type)
+                if not (0 <= bin_type < M):
+                    raise ValueError(
+                        f"Bin {bin_idx} in slot {slot_idx} has invalid type {bin_type}."
+                    )
+                bin_counts[bin_type] += 1
+
+                capacity = np.asarray(bin_info.capacity, dtype=float).reshape(-1)
+                remaining = np.asarray(
+                    bin_info.remaining_capacity, dtype=float
+                ).reshape(-1)
+                counts_vec = np.asarray(bin_info.item_counts, dtype=int).reshape(-1)
+
+                if capacity.shape[0] != K or remaining.shape[0] != K:
+                    raise ValueError(
+                        f"Bin {bin_idx} in slot {slot_idx} has incorrect capacity shape."
+                    )
+                if counts_vec.shape[0] != J:
+                    raise ValueError(
+                        f"Bin {bin_idx} in slot {slot_idx} has incorrect item_counts length."
+                    )
+                if np.any(counts_vec < 0):
+                    raise ValueError(
+                        f"Bin {bin_idx} in slot {slot_idx} contains negative item counts."
+                    )
+
+                expected_capacity = capacities[:, bin_type].reshape(-1)
+                if not np.allclose(capacity, expected_capacity, atol=atol):
+                    raise ValueError(
+                        f"Bin {bin_idx} in slot {slot_idx} capacity does not match type {bin_type}."
+                    )
+
+                if np.any(remaining < -atol):
+                    raise ValueError(
+                        f"Bin {bin_idx} in slot {slot_idx} is overpacked (negative remaining capacity)."
+                    )
+
+                load = requirements @ counts_vec
+                if load.shape[0] != K:
+                    raise ValueError(
+                        f"Bin {bin_idx} in slot {slot_idx} produced invalid load shape."
+                    )
+                if np.any(load > capacity + atol):
+                    raise ValueError(
+                        f"Bin {bin_idx} in slot {slot_idx} exceeds capacity constraints."
+                    )
+                if not np.allclose(capacity - load, remaining, atol=atol):
+                    raise ValueError(
+                        f"Bin {bin_idx} in slot {slot_idx} has inconsistent remaining capacity."
+                    )
+
+                assigned_jobs += counts_vec
+
+            if not np.array_equal(bin_counts, machine_counts):
+                raise ValueError(
+                    f"Slot {slot_idx} machine counts do not match bin list."
+                )
+
+            if not np.array_equal(assigned_jobs, required_jobs.reshape(-1)):
+                raise ValueError(
+                    f"Slot {slot_idx} does not cover the required job counts."
+                )
+
+            expected_machine_vector = np.maximum(
+                expected_machine_vector, machine_counts
+            )
+
+        machine_vector = np.asarray(self.machine_vector, dtype=int).reshape(-1)
+        if machine_vector.shape[0] != M:
+            raise ValueError(
+                f"machine_vector must have one entry per machine type ({M})."
+            )
+        if not np.array_equal(machine_vector, expected_machine_vector):
+            raise ValueError("machine_vector does not match the per-slot usage.")
+
+        upper_bound_vec = np.asarray(self.upper_bound, dtype=int).reshape(-1)
+        if upper_bound_vec.shape[0] != M:
+            raise ValueError("upper_bound must have one entry per machine type.")
+        if np.any(machine_vector > upper_bound_vec):
+            raise ValueError("machine_vector exceeds the provided upper bound.")
+
+        if purchase_vec is not None and running_vec is not None:
+            recomputed = float(np.dot(purchase_vec, machine_vector))
+            running_total = float(
+                sum(
+                    float(
+                        np.dot(running_vec, np.asarray(slot.machine_counts, dtype=int))
+                    )
+                    for slot in self.time_slot_solutions
+                )
+            )
+            recomputed += running_total
+            if not np.isclose(recomputed, float(self.total_cost), atol=atol):
+                raise ValueError("total_cost does not match purchase+running costs.")
 
     def average_remaining_capacity(self) -> np.ndarray:
         """
