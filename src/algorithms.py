@@ -66,7 +66,7 @@ class ScheduleResult:
 
     total_cost: float
     machine_vector: np.ndarray
-    upper_bound: np.ndarray
+    upper_bound: np.ndarray | None
     time_slot_solutions: List[TimeSlotSolution]
 
     def validate(
@@ -221,11 +221,11 @@ class ScheduleResult:
         if not np.array_equal(machine_vector, expected_machine_vector):
             raise ValueError("machine_vector does not match the per-slot usage.")
 
-        upper_bound_vec = np.asarray(self.upper_bound, dtype=int).reshape(-1)
-        if upper_bound_vec.shape[0] != M:
-            raise ValueError("upper_bound must have one entry per machine type.")
-        if np.any(machine_vector > upper_bound_vec):
-            raise ValueError("machine_vector exceeds the provided upper bound.")
+        # upper_bound_vec = np.asarray(self.upper_bound, dtype=int).reshape(-1)
+        # if upper_bound_vec.shape[0] != M:
+        #     raise ValueError("upper_bound must have one entry per machine type.")
+        # if np.any(machine_vector > upper_bound_vec):
+        #     raise ValueError("machine_vector exceeds the provided upper bound.")
 
         if purchase_vec is not None and running_vec is not None:
             recomputed = float(np.dot(purchase_vec, machine_vector))
@@ -924,6 +924,9 @@ def schedule_jobs(
     requirements = np.asarray(problem.requirements, dtype=float)
     job_matrix = np.asarray(problem.job_counts, dtype=int)
 
+    purchase_costs = problem.purchase_costs
+    running_costs = problem.running_costs
+
     if capacities.ndim != 2 or requirements.ndim != 2:
         raise ValueError("C and R must be 2D matrices.")
     if capacities.shape[0] != requirements.shape[0]:
@@ -974,8 +977,6 @@ def schedule_jobs(
     total_cost, machine_vector = _solution_cost(
         time_slot_solutions, purchase_costs, running_costs
     )
-    # print("Initial machine vector:", machine_vector)
-    # print("Initial cost:", total_cost)
 
     current_signature = _solution_signature(time_slot_solutions)
     seen_solutions = {current_signature}
@@ -992,9 +993,6 @@ def schedule_jobs(
         neighbor_cost, neighbor_machine_vector = _solution_cost(
             neighbor_solutions, purchase_costs, running_costs
         )
-
-        # print("Neighbor machine vector:", neighbor_machine_vector)
-        # print("Neighbor cost:", neighbor_cost)
 
         if neighbor_signature in seen_solutions:
             break
@@ -1021,7 +1019,6 @@ def schedule_jobs(
         if neighbor_cost < total_cost:
             time_slot_solutions = neighbor_solutions
             total_cost = neighbor_cost
-            # print("Machine vector:", machine_vector)
             machine_vector = neighbor_machine_vector
             seen_solutions.add(neighbor_signature)
             current_signature = neighbor_signature
@@ -1032,5 +1029,107 @@ def schedule_jobs(
         total_cost=total_cost,
         machine_vector=machine_vector,
         upper_bound=upper_bound,
+        time_slot_solutions=time_slot_solutions,
+    )
+
+
+def schedule_jobs_marginal_cost(
+    problem: ProblemInstance,
+    max_iterations: int = 25,
+) -> ScheduleResult:
+    """
+    Version of 'schedule_jobs' which uses marginal-cost based method for
+    computing initial machine vector.
+    """
+
+    capacities = np.asarray(problem.capacities, dtype=float)
+    requirements = np.asarray(problem.requirements, dtype=float)
+    job_matrix = np.asarray(problem.job_counts, dtype=int)
+
+    purchase_costs = problem.purchase_costs
+    running_costs = problem.running_costs
+
+    if capacities.ndim != 2 or requirements.ndim != 2:
+        raise ValueError("C and R must be 2D matrices.")
+    if capacities.shape[0] != requirements.shape[0]:
+        raise ValueError("C and R must have the same number of resource dimensions.")
+
+    if job_matrix.ndim == 1:
+        job_matrix = job_matrix.reshape(1, -1)
+    elif job_matrix.ndim != 2:
+        raise ValueError("L must be a vector or a 2D matrix.")
+    if np.any(job_matrix < 0):
+        raise ValueError("Job counts in L must be non-negative.")
+
+    _, M = capacities.shape
+    _, J = requirements.shape
+    if job_matrix.shape[1] != J:
+        raise ValueError(
+            f"L must contain {J} job-type columns; got {job_matrix.shape[1]}."
+        )
+
+    purchase_costs = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    running_costs = np.asarray(running_costs, dtype=float).reshape(-1)
+    if purchase_costs.shape[0] != M or running_costs.shape[0] != M:
+        raise ValueError("Cost vectors must have one entry per machine type.")
+
+    machine_vector = marginal_cost_initial_solution(
+        capacities, requirements, job_matrix, purchase_costs, running_costs
+    )
+    time_slot_solutions = _pack_all_time_slots(
+        machine_vector, capacities, requirements, job_matrix, running_costs
+    )
+    total_cost, machine_vector = _solution_cost(
+        time_slot_solutions, purchase_costs, running_costs
+    )
+
+    current_signature = _solution_signature(time_slot_solutions)
+    seen_solutions = {current_signature}
+
+    for _ in range(max_iterations):
+        neighbor_solutions = [
+            repack_jobs(slot, requirements, running_costs)
+            for slot in time_slot_solutions
+        ]
+        neighbor_signature = _solution_signature(neighbor_solutions)
+        if neighbor_signature == current_signature:
+            break
+
+        neighbor_cost, neighbor_machine_vector = _solution_cost(
+            neighbor_solutions, purchase_costs, running_costs
+        )
+
+        if neighbor_signature in seen_solutions:
+            break
+
+        if not np.array_equal(neighbor_machine_vector, machine_vector):
+            neighbor_solutions = _pack_all_time_slots(
+                neighbor_machine_vector,
+                capacities,
+                requirements,
+                job_matrix,
+                running_costs,
+            )
+            neighbor_cost, neighbor_machine_vector = _solution_cost(
+                neighbor_solutions, purchase_costs, running_costs
+            )
+            neighbor_signature = _solution_signature(neighbor_solutions)
+
+        if neighbor_signature in seen_solutions:
+            break
+
+        if neighbor_cost < total_cost:
+            time_slot_solutions = neighbor_solutions
+            total_cost = neighbor_cost
+            machine_vector = neighbor_machine_vector
+            seen_solutions.add(neighbor_signature)
+            current_signature = neighbor_signature
+        else:
+            break
+
+    return ScheduleResult(
+        total_cost=total_cost,
+        machine_vector=machine_vector,
+        upper_bound=None,
         time_slot_solutions=time_slot_solutions,
     )

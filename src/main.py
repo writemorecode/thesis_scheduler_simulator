@@ -2,44 +2,42 @@ from __future__ import annotations
 
 import sys
 import time
+from typing import Any, Callable
 
 import numpy as np
 
-from algorithms import schedule_jobs
-from problem_generation import RandomInstance, generate_random_instance
+from algorithms import ScheduleResult, schedule_jobs, schedule_jobs_marginal_cost
+from problem_generation import ProblemInstance, generate_random_instance
+from visualization import visualize_schedule
 
 
-def solve_with_upper_bound(problem: RandomInstance):
-    start_time = time.time()
-    schedule = schedule_jobs(
-        C=problem.capacities,
-        R=problem.requirements,
-        L=problem.job_counts,
-        purchase_costs=problem.purchase_costs,
-        running_costs=problem.running_costs,
-    )
-    end_time = time.time()
-    delta = end_time - start_time
-    print(f"Total cost: {schedule.total_cost}")
-    print(f"Machines: {schedule.machine_vector}")
-    print(f"Execution time: {delta} sec.")
+def run_scheduler(
+    problem: ProblemInstance,
+    scheduler=Callable[[Any], ScheduleResult],
+    name: str | None = None,
+) -> None:
+    start = time.time()
+    schedule: ScheduleResult = scheduler(problem)
+    end = time.time()
+    delta = end - start
 
+    schedule.validate(problem)
 
-def solve_with_marginal_cost(problem: RandomInstance):
-    start_time = time.time()
-    schedule = schedule_jobs(
-        C=problem.capacities,
-        R=problem.requirements,
-        L=problem.job_counts,
-        purchase_costs=problem.purchase_costs,
-        running_costs=problem.running_costs,
-        initial_method="marginal_cost",
-    )
-    end_time = time.time()
-    delta = end_time - start_time
-    print(f"Total cost: {schedule.total_cost}")
-    print(f"Machines: {schedule.machine_vector}")
-    print(f"Execution time: {delta} sec.")
+    if name:
+        visualize_schedule(
+            schedule,
+            problem.capacities,
+            problem.requirements,
+            output_path=f"{name}_viz.png",
+        )
+
+    print(f"Total cost:\t{schedule.total_cost}")
+    print(f"Machines:\t{schedule.machine_vector}")
+    total_machine_count = schedule.machine_vector.sum()
+    print(f"Total machine count:\t{total_machine_count}")
+    print(f"Execution time:\t{delta:.4f} sec.")
+    avg_remaining_capacity = schedule.average_remaining_capacity().mean()
+    print(f"Avg. remaining bin capacity:\t{avg_remaining_capacity:.2f}")
 
 
 def main():
@@ -48,18 +46,16 @@ def main():
     except IndexError:
         seed = np.random.randint(1_000_000)
 
-    K, J, M, T = 5, 10, 4, 100
+    K, J, M, T = 5, 10, 6, 100
+    # K, J, M, T = 2, 4, 4, 5
     problem = generate_random_instance(K=K, J=J, M=M, T=T, seed=seed)
 
-    print(f"Buy costs: {problem.purchase_costs}\tOpen costs: {problem.running_costs}")
+    print(f"Buy costs:\t{problem.purchase_costs}\nOpen costs:\t{problem.running_costs}")
+    print()
 
-    print("UPPER-BOUND")
-    solve_with_upper_bound(problem)
-
+    run_scheduler(problem, schedule_jobs)
     print("-" * 50)
-
-    print("MARGINAL COST")
-    solve_with_marginal_cost(problem)
+    run_scheduler(problem, schedule_jobs_marginal_cost)
 
 
 if __name__ == "__main__":
