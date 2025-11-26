@@ -8,7 +8,7 @@ from typing import List, Sequence, Tuple
 import numpy as np
 
 from problem_generation import ProblemInstance
-from packing import BinInfo as _BaseBinInfo, first_fit_decreasing
+from packing import BinInfo as _BaseBinInfo, BinSelectionFn, first_fit_decreasing
 
 
 class BinInfo(_BaseBinInfo):
@@ -515,6 +515,73 @@ def machines_upper_bound(
     return upper_bound
 
 
+def _ffd_sorted_requirements(requirements: np.ndarray) -> np.ndarray:
+    """Mirror the job-type ordering used by ``first_fit_decreasing``."""
+
+    req = np.asarray(requirements, dtype=float)
+    if req.ndim != 2:
+        raise ValueError("requirements must be a 2D matrix.")
+
+    _, J = req.shape
+    if J == 0 or req.shape[0] == 0:
+        return req.copy()
+
+    sort_keys = -req[::-1, :]
+    sorted_indices = np.lexsort(sort_keys)
+    return req[:, sorted_indices]
+
+
+def marginal_cost_bin_selection(
+    requirements: np.ndarray,
+    purchase_costs: np.ndarray,
+    running_costs: np.ndarray,
+    purchased_counts: np.ndarray,
+    open_counts: np.ndarray,
+) -> BinSelectionFn:
+    """
+    Build a bin selection function that prioritizes lowest marginal cost.
+
+    The returned callable matches the ``bin_selection_fn`` expected by
+    ``first_fit_decreasing`` and assumes ``requirements`` is ordered the same way
+    that function iterates over job types.
+    """
+
+    def _select(job_type: int, capacities: np.ndarray) -> int:
+        demand = requirements[:, [job_type]]
+        fits_mask = np.all(capacities >= demand, axis=0)
+        if not np.any(fits_mask):
+            raise ValueError(
+                f"Job type {job_type} does not fit in any available machine type."
+            )
+
+        best_type = None
+        best_key = None
+        for bin_type, fits in enumerate(fits_mask):
+            if not fits:
+                continue
+            already_owned = open_counts[bin_type] < purchased_counts[bin_type]
+            marginal = running_costs[bin_type]
+            if not already_owned:
+                marginal += purchase_costs[bin_type]
+            key = (marginal, running_costs[bin_type], purchase_costs[bin_type])
+            if best_key is None or key < best_key:
+                best_key = key
+                best_type = bin_type
+
+        if best_type is None:
+            raise ValueError(
+                f"Failed to choose a machine type for job type {job_type}."
+            )
+
+        open_counts[best_type] += 1
+        if open_counts[best_type] > purchased_counts[best_type]:
+            purchased_counts[best_type] = open_counts[best_type]
+
+        return best_type
+
+    return _select
+
+
 def marginal_cost_initial_solution(
     C: np.ndarray,
     R: np.ndarray,
@@ -525,11 +592,10 @@ def marginal_cost_initial_solution(
     """
     Greedy initial machine vector based on marginal costs.
 
-    Jobs are processed one at a time for each time slot. An item is placed into any
-    already-open machine that can fit it (zero marginal cost). If no open bin fits,
-    the algorithm opens the cheapest feasible machine type using purchase + running
-    cost as the marginal cost. Machines purchased in earlier time slots only incur
-    the running cost when reused. The resulting vector is the maximum number of
+    Each time slot is packed with ``first_fit_decreasing`` using a marginal-cost
+    bin selection rule that prefers reusing already-purchased machines before
+    buying new ones. Machines purchased in earlier time slots only incur the
+    running cost when reused. The resulting vector is the maximum number of
     simultaneously open machines of each type across all slots.
     """
 
@@ -561,73 +627,27 @@ def marginal_cost_initial_solution(
     if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
+    sorted_requirements = _ffd_sorted_requirements(requirements)
     purchased_counts = np.zeros(M, dtype=int)
 
-    def _marginal_cost(bin_type: int, open_counts: np.ndarray) -> float:
-        already_owned = open_counts[bin_type] < purchased_counts[bin_type]
-        base_cost = running_vec[bin_type]
-        return base_cost if already_owned else base_cost + purchase_vec[bin_type]
-
     for slot_jobs in job_matrix:
-        open_bins: List[BinInfo] = []
         open_counts = np.zeros(M, dtype=int)
+        selection_fn = marginal_cost_bin_selection(
+            sorted_requirements,
+            purchase_vec,
+            running_vec,
+            purchased_counts,
+            open_counts,
+        )
 
-        for job_type, job_count in enumerate(slot_jobs):
-            if job_count <= 0:
-                continue
-
-            demand = requirements[:, [job_type]]
-            fits_mask = np.all(capacities >= demand, axis=0)
-            if not np.any(fits_mask):
-                raise ValueError(
-                    f"Job type {job_type} does not fit in any available machine type."
-                )
-
-            for _ in range(int(job_count)):
-                placed = False
-                for bin_info in open_bins:
-                    if np.all(bin_info.remaining_capacity >= demand):
-                        bin_info.remaining_capacity -= demand
-                        bin_info.item_counts[job_type] += 1
-                        bin_info.update_utilization_cache()
-                        placed = True
-                        break
-
-                if placed:
-                    continue
-
-                best_type = None
-                best_key = None
-                for bin_type, fits in enumerate(fits_mask):
-                    if not fits:
-                        continue
-                    marginal = _marginal_cost(bin_type, open_counts)
-                    # Tie-breaker prefers lower running cost and then lower purchase cost
-                    key = (marginal, running_vec[bin_type], purchase_vec[bin_type])
-                    if best_key is None or key < best_key:
-                        best_key = key
-                        best_type = bin_type
-
-                if best_type is None:
-                    raise ValueError(
-                        f"Failed to choose a machine type for job type {job_type}."
-                    )
-
-                capacity = capacities[:, [best_type]]
-                bin_info = BinInfo(
-                    bin_type=best_type,
-                    capacity=capacity.copy(),
-                    remaining_capacity=capacity.copy(),
-                    item_counts=np.zeros(J, dtype=int),
-                )
-                open_bins.append(bin_info)
-                open_counts[best_type] += 1
-                if open_counts[best_type] > purchased_counts[best_type]:
-                    purchased_counts[best_type] = open_counts[best_type]
-
-                bin_info.remaining_capacity -= demand
-                bin_info.item_counts[job_type] += 1
-                bin_info.update_utilization_cache()
+        first_fit_decreasing(
+            capacities,
+            requirements,
+            purchase_vec,
+            running_vec,
+            L=slot_jobs,
+            bin_selection_fn=selection_fn,
+        )
 
     return purchased_counts
 
