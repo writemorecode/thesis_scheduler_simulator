@@ -22,12 +22,13 @@ from problem_generation import ProblemInstance
 
 
 def _fraction(iteration: int, total_iterations: int) -> float:
-    """Temperature-like schedule that starts at 1 and ends at 0."""
+    """Cosine-decay schedule that starts at 1 and ends at 0."""
 
     if total_iterations <= 1:
         return 1.0
     ratio = iteration / float(total_iterations - 1)
-    return float(max(0.0, min(1.0, 1.0 - ratio)))
+    # Cosine decay: smooth drop from 1 to 0 as iterations progress.
+    return float(max(0.0, min(1.0, 0.5 * (1.0 + math.cos(math.pi * ratio)))))
 
 
 def _copy_bins(bins: Sequence[BinInfo]) -> List[BinInfo]:
@@ -64,6 +65,9 @@ def _ruin_slot_bins(
     # Shuffle first to randomize tie ordering among equally utilized bins.
     rng.shuffle(np.array(bins))
     _sort_bins_by_utilization(bins, requirements)
+
+    # Works much better!
+    fraction = 0.30
 
     ruin_count = int(math.ceil(fraction * len(bins)))
     ruin_count = min(ruin_count, len(bins))
@@ -113,8 +117,8 @@ def ruin_recreate_schedule(
     The procedure starts from the marginal-cost machine vector, then iteratively
     improves it by (a) re-packing each slot, (b) ruining a fraction of the worst
     bins, and (c) recreating slot packings with best-fit decreasing. Inferior
-    candidates are accepted with probability ``p = 1 - iter/(num_iterations-1)``,
-    allowing exploration early and converging later.
+    candidates are accepted with probability following a cosine decay from 1 to
+    0, allowing exploration early and converging later.
     """
 
     rng = rng or np.random.default_rng()
@@ -176,7 +180,7 @@ def ruin_recreate_schedule(
             best_machine_vector = repacked_machine_vector
             best_slots = [slot.copy() for slot in repacked_slots]
 
-        print(f"x:\t{best_machine_vector}\tcost: {best_cost}")
+        print(f"x:\t{best_machine_vector}\tcost: {best_cost}\tp: {p:.4f}")
 
         ruined_slots: List[TimeSlotSolution] = []
         for slot_idx, slot in enumerate(repacked_slots):

@@ -10,6 +10,8 @@ from algorithms import ScheduleResult, schedule_jobs, schedule_jobs_marginal_cos
 from problem_generation import ProblemInstance, generate_random_instance
 from visualization import visualize_schedule
 
+from ruin_recreate import ruin_recreate_schedule
+
 
 def run_scheduler(
     problem: ProblemInstance,
@@ -54,9 +56,9 @@ def main():
     print(f"Buy costs:\t{problem.purchase_costs}\nOpen costs:\t{problem.running_costs}")
     print()
 
-    run_scheduler(problem, schedule_jobs)
-    print("-" * 50)
-    run_scheduler(problem, schedule_jobs_marginal_cost)
+    run_scheduler(
+        problem, lambda prob: ruin_recreate_schedule(problem, num_iterations=10)
+    )
 
 
 if __name__ == "__main__":

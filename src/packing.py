@@ -418,7 +418,8 @@ def best_fit(
                 remaining_sum = float(candidate_remaining.sum())
 
                 if utilization > best_utilization or (
-                    np.isclose(utilization, best_utilization) and remaining_sum < best_remaining_sum
+                    np.isclose(utilization, best_utilization)
+                    and remaining_sum < best_remaining_sum
                 ):
                     best_idx = idx
                     best_utilization = utilization
