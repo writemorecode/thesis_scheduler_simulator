@@ -66,9 +66,6 @@ def _ruin_slot_bins(
     rng.shuffle(np.array(bins))
     _sort_bins_by_utilization(bins, requirements)
 
-    # Works much better!
-    fraction = 0.30
-
     ruin_count = int(math.ceil(fraction * len(bins)))
     ruin_count = min(ruin_count, len(bins))
 
@@ -175,12 +172,6 @@ def ruin_recreate_schedule(
         repacked_cost, repacked_machine_vector = _solution_cost(
             repacked_slots, purchase_costs, running_costs
         )
-        if repacked_cost < best_cost:
-            best_cost = repacked_cost
-            best_machine_vector = repacked_machine_vector
-            best_slots = [slot.copy() for slot in repacked_slots]
-
-        print(f"x:\t{best_machine_vector}\tcost: {best_cost}\tp: {p:.4f}")
 
         ruined_slots: List[TimeSlotSolution] = []
         for slot_idx, slot in enumerate(repacked_slots):
@@ -200,19 +191,24 @@ def ruin_recreate_schedule(
             ruined_slots, purchase_costs, running_costs
         )
 
-        accepted = False
-        if candidate_cost < best_cost:
-            best_cost = candidate_cost
-            best_machine_vector = candidate_machine_vector
-            best_slots = [slot.copy() for slot in ruined_slots]
-            accepted = True
-        elif rng.random() < p:
-            accepted = True
-
-        if accepted:
+        accept_prob = p
+        if candidate_cost < best_cost or rng.random() <= accept_prob:
             current_slots = ruined_slots
+            current_cost = candidate_cost
+            current_machine_vector = candidate_machine_vector
         else:
             current_slots = repacked_slots
+            current_cost = repacked_cost
+            current_machine_vector = repacked_machine_vector
+
+        if current_cost < best_cost:
+            best_cost = current_cost
+            best_machine_vector = current_machine_vector
+            best_slots = [slot.copy() for slot in current_slots]
+
+        print(
+            f"i:{iteration}\tx:\t{best_machine_vector}\tcost: {best_cost}\tp: {p:.4f}"
+        )
 
     return ScheduleResult(
         total_cost=best_cost,
