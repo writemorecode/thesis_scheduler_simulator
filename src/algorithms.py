@@ -999,6 +999,104 @@ def repack_jobs(
     return TimeSlotSolution(machine_counts=new_counts, bins=bins)
 
 
+def schedule_jobs_peak_demand(problem: ProblemInstance) -> ScheduleResult:
+    """
+    Schedule jobs by seeding with the most resource-intensive time slot.
+
+    The algorithm computes the per-slot resource totals ``A = R @ L.T`` and picks
+    the column with the largest total demand. That slot is packed first with no
+    pre-opened machines; the resulting machine vector is then used as the set of
+    open bins for packing every other time slot (which may open additional
+    machines if needed). The final machine vector is the maximum count across
+    all packed slots.
+    """
+
+    capacities = np.asarray(problem.capacities, dtype=float)
+    requirements = np.asarray(problem.requirements, dtype=float)
+    job_matrix = np.asarray(problem.job_counts, dtype=int)
+
+    purchase_costs = np.asarray(problem.purchase_costs, dtype=float).reshape(-1)
+    running_costs = np.asarray(problem.running_costs, dtype=float).reshape(-1)
+
+    if capacities.ndim != 2 or requirements.ndim != 2:
+        raise ValueError("C and R must be 2D matrices.")
+    if capacities.shape[0] != requirements.shape[0]:
+        raise ValueError("C and R must have the same number of resource dimensions.")
+
+    if job_matrix.ndim == 1:
+        job_matrix = job_matrix.reshape(1, -1)
+    elif job_matrix.ndim != 2:
+        raise ValueError("L must be a vector or a 2D matrix.")
+    if np.any(job_matrix < 0):
+        raise ValueError("Job counts in L must be non-negative.")
+
+    K, M = capacities.shape
+    K_req, J = requirements.shape
+    if K != K_req:
+        raise ValueError(
+            f"C and R must describe the same number of resources. Got {K} and {K_req}."
+        )
+    if job_matrix.shape[1] != J:
+        raise ValueError(
+            f"L must contain {J} job-type columns; got {job_matrix.shape[1]}."
+        )
+    if purchase_costs.shape[0] != M or running_costs.shape[0] != M:
+        raise ValueError("Cost vectors must have one entry per machine type.")
+
+    num_slots = job_matrix.shape[0]
+    if num_slots == 0:
+        machine_vector = np.zeros(M, dtype=int)
+        return ScheduleResult(
+            total_cost=0.0,
+            machine_vector=machine_vector,
+            upper_bound=None,
+            time_slot_solutions=[],
+        )
+
+    demand_matrix = requirements @ job_matrix.T  # Shape (K, T)
+    per_slot_totals = np.sum(demand_matrix, axis=0)
+    peak_slot_index = int(np.argsort(-per_slot_totals)[0])
+
+    initial_solution = _pack_time_slot_jobs(
+        machine_vector=np.zeros(M, dtype=int),
+        capacities=capacities,
+        requirements=requirements,
+        job_counts=job_matrix,
+        running_costs=running_costs,
+    )
+    base_machine_vector = initial_solution.machine_counts
+
+    time_slot_solutions: List[TimeSlotSolution] = []
+    for slot_idx in range(num_slots):
+        if slot_idx == peak_slot_index:
+            slot_solution = initial_solution
+            time_slot_solutions.append(slot_solution)
+        else:
+            slot_solution = _pack_time_slot_jobs(
+                base_machine_vector,
+                capacities,
+                requirements,
+                job_matrix[slot_idx],
+                running_costs=running_costs,
+                purchase_costs=purchase_costs,
+            )
+            repacked_slot_solution = repack_jobs(
+                slot_solution, capacities, requirements, running_costs
+            )
+            time_slot_solutions.append(repacked_slot_solution)
+
+    total_cost, machine_vector = _solution_cost(
+        time_slot_solutions, purchase_costs, running_costs
+    )
+
+    return ScheduleResult(
+        total_cost=total_cost,
+        machine_vector=machine_vector,
+        upper_bound=None,
+        time_slot_solutions=time_slot_solutions,
+    )
+
+
 def schedule_jobs(
     problem: ProblemInstance,
     max_iterations: int = 25,
