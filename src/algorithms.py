@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass
-from os import PathLike
 from typing import List, Sequence, Tuple
 
 import numpy as np
 
 from problem_generation import ProblemInstance
-from packing import BinInfo as _BaseBinInfo, BinSelectionFn, first_fit_decreasing
+from packing import BinInfo as _BaseBinInfo, BinSelectionFn
 
 
 class BinInfo(_BaseBinInfo):
@@ -328,209 +326,6 @@ class ScheduleResult:
         return "\n".join(lines)
 
 
-def dump_schedule_to_csv(
-    schedule: ScheduleResult, output_path: str | PathLike[str]
-) -> None:
-    """Write per-machine assignment information for ``schedule`` to ``output_path``."""
-
-    job_type_count = 0
-    for slot in schedule.time_slot_solutions:
-        for bin_info in slot.bins:
-            if bin_info.item_counts.size > job_type_count:
-                job_type_count = int(bin_info.item_counts.size)
-
-    headers = ["time_slot", "machine_type"] + [
-        f"job_{idx}" for idx in range(job_type_count)
-    ]
-
-    with open(output_path, "w", newline="") as csv_file:
-        writer = csv.writer(csv_file)
-        writer.writerow(headers)
-
-        for slot_idx, slot in enumerate(schedule.time_slot_solutions):
-            # Rows are emitted in slot order to keep rows grouped by time slot.
-            for bin_info in slot.bins:
-                raw_counts = bin_info.item_counts.reshape(-1)
-                row = [slot_idx, int(bin_info.bin_type)]
-                row.extend(
-                    int(raw_counts[idx]) if idx < raw_counts.size else 0
-                    for idx in range(job_type_count)
-                )
-                writer.writerow(row)
-
-
-def _pareto_non_dominated(time_slots: np.ndarray) -> np.ndarray:
-    """Return only the time slots that are not strictly Pareto dominated by another slot."""
-
-    if time_slots.size == 0:
-        return time_slots
-
-    # Remove duplicate rows first; duplicate slots convey no new information.
-    unique_slots, unique_indices = np.unique(time_slots, axis=0, return_index=True)
-    unique_slots = unique_slots[np.argsort(unique_indices)]
-
-    keep_mask = np.ones(len(unique_slots), dtype=bool)
-    for i in range(len(unique_slots)):
-        if not keep_mask[i]:
-            continue
-        for j in range(len(unique_slots)):
-            if i == j:
-                continue
-            dominates = np.all(unique_slots[j] >= unique_slots[i]) and np.any(
-                unique_slots[j] > unique_slots[i]
-            )
-            if dominates:
-                keep_mask[i] = False
-                break
-
-    return unique_slots[keep_mask]
-
-
-def _ffd_single_machine_type(
-    capacity: np.ndarray, requirements: np.ndarray, job_counts: np.ndarray
-) -> int:
-    """
-    Wrapper that runs ``first_fit_decreasing`` for a single bin type.
-
-    Parameters
-    ----------
-    capacity : np.ndarray
-        One-dimensional array with the remaining capacity per resource for the bin type.
-    requirements : np.ndarray
-        Matrix of shape (K, J) containing per-resource demand for each job type.
-    job_counts : np.ndarray
-        Length-J vector with the number of jobs of each type to place.
-
-    Returns
-    -------
-    int
-        Number of bins opened by the heuristic.
-    """
-
-    cap_vec = np.asarray(capacity, dtype=float).reshape(-1, 1)
-    req = np.asarray(requirements, dtype=float)
-    counts = np.asarray(job_counts, dtype=int).reshape(-1)
-
-    if req.ndim != 2:
-        raise ValueError("requirements must be a 2D matrix.")
-    if counts.shape[0] != req.shape[1]:
-        raise ValueError(
-            f"job_counts length must match the number of job types. Expected {req.shape[1]}, got {counts.shape[0]}."
-        )
-
-    # Purchase and opening costs do not matter for the upper-bound calculation,
-    # so we provide zeros and only look at the number of bins returned.
-    purchase_costs = np.zeros(1)
-    opening_costs = np.zeros(1)
-
-    result = first_fit_decreasing(
-        C=cap_vec,
-        R=req,
-        purchase_costs=purchase_costs,
-        opening_costs=opening_costs,
-        L=counts,
-    )
-
-    return len(result.bins)
-
-
-def machines_upper_bound(
-    C: np.ndarray, R: np.ndarray, time_slots: np.ndarray
-) -> np.ndarray:
-    """
-    Compute the component-wise upper bound on the required number of machines of each type.
-
-    The procedure follows the method described in ``method.typ``:
-    1. Filter time slots down to the Pareto frontier so only the most demanding slots remain.
-    2. For every remaining slot and machine type, drop job types that physically cannot
-       run on that machine (any requirement exceeds the machine capacity in some dimension).
-    3. Run FFD using only that machine type to get an upper bound for the slot.
-    4. Take the maximum bound across all surviving time slots.
-
-    Parameters
-    ----------
-    C : np.ndarray
-        Matrix of shape (K, M) with the per-resource capacity of each machine type.
-    R : np.ndarray
-        Matrix of shape (K, J) with the per-resource demand of each job type.
-    time_slots : np.ndarray
-        Either a length-J vector or a (T, J) matrix with counts of jobs scheduled in
-        each time slot.
-
-    Returns
-    -------
-    np.ndarray
-        Length-M vector where entry ``i`` is the upper bound on machines of type ``i``.
-    """
-
-    capacities = np.asarray(C, dtype=float)
-    requirements = np.asarray(R, dtype=float)
-    if capacities.ndim != 2 or requirements.ndim != 2:
-        raise ValueError("C and R must be 2D matrices.")
-
-    K, M = capacities.shape
-    K_req, J = requirements.shape
-    if K != K_req:
-        raise ValueError(
-            f"C and R must describe the same number of resources. Got {K} and {K_req}."
-        )
-
-    slot_array = np.asarray(time_slots, dtype=int)
-    if slot_array.ndim == 1:
-        if slot_array.shape[0] != J:
-            raise ValueError(
-                f"time_slots vector length must match the number of job types ({J})."
-            )
-        slot_array = slot_array.reshape(1, -1)
-    elif slot_array.ndim == 2:
-        if slot_array.shape[1] != J:
-            raise ValueError(
-                f"time_slots matrix must have {J} columns (one per job type), got {slot_array.shape[1]}."
-            )
-    else:
-        raise ValueError("time_slots must be a vector or a 2D matrix.")
-
-    # Remove empty slots early to avoid unnecessary FFD runs.
-    nonzero_mask = np.any(slot_array > 0, axis=1)
-    slot_array = slot_array[nonzero_mask]
-    if slot_array.size == 0:
-        return np.zeros(M, dtype=int)
-
-    candidate_slots = _pareto_non_dominated(slot_array)
-    upper_bound = np.zeros(M, dtype=int)
-
-    for m in range(M):
-        capacity = capacities[:, m]
-        # Identify job types that cannot run on machine type m.
-        unsupported_jobs = np.any(requirements > capacity.reshape(-1, 1), axis=0)
-        max_bins = 0
-        for slot in candidate_slots:
-            lambda_vec = slot.copy()
-            lambda_vec[unsupported_jobs] = 0
-            bins_needed = _ffd_single_machine_type(capacity, requirements, lambda_vec)
-            if bins_needed > max_bins:
-                max_bins = bins_needed
-        upper_bound[m] = max_bins
-
-    return upper_bound
-
-
-def _ffd_sorted_requirements(requirements: np.ndarray) -> np.ndarray:
-    """Mirror the job-type ordering used by ``first_fit_decreasing``."""
-
-    req = np.asarray(requirements, dtype=float)
-    if req.ndim != 2:
-        raise ValueError("requirements must be a 2D matrix.")
-
-    _, J = req.shape
-    if J == 0 or req.shape[0] == 0:
-        return req.copy()
-
-    sort_keys = -req[::-1, :]
-    sorted_indices = np.lexsort(sort_keys)
-    return req[:, sorted_indices]
-
-
 def marginal_cost_bin_selection(
     requirements: np.ndarray,
     purchase_costs: np.ndarray,
@@ -583,66 +378,6 @@ def marginal_cost_bin_selection(
     return _select
 
 
-def marginal_cost_initial_solution(
-    C: np.ndarray,
-    R: np.ndarray,
-    L: np.ndarray,
-    purchase_costs: np.ndarray,
-    running_costs: np.ndarray,
-) -> np.ndarray:
-    """
-    Greedy initial machine vector based on marginal costs.
-
-    Each time slot is packed with ``first_fit_decreasing`` using a marginal-cost
-    bin selection rule that prefers reusing already-purchased machines before
-    buying new ones. Machines purchased in earlier time slots only incur the
-    running cost when reused. The resulting vector is the maximum number of
-    simultaneously open machines of each type across all slots.
-    """
-
-    capacities = np.asarray(C, dtype=float)
-    requirements = np.asarray(R, dtype=float)
-    job_matrix = np.asarray(L, dtype=int)
-
-    if capacities.ndim != 2 or requirements.ndim != 2:
-        raise ValueError("C and R must be 2D matrices.")
-
-    K, M = capacities.shape
-    K_req, J = requirements.shape
-    if K != K_req:
-        raise ValueError(
-            f"C and R must describe the same number of resources. Got {K} and {K_req}."
-        )
-
-    if job_matrix.ndim == 1:
-        job_matrix = job_matrix.reshape(1, -1)
-    elif job_matrix.ndim != 2:
-        raise ValueError("L must be a vector or a 2D matrix.")
-    if job_matrix.shape[1] != J:
-        raise ValueError(
-            f"L must contain {J} job-type columns; got {job_matrix.shape[1]}."
-        )
-
-    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
-    if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
-        raise ValueError("Cost vectors must have one entry per machine type.")
-
-    purchased_counts = np.zeros(M, dtype=int)
-
-    for slot_jobs in job_matrix:
-        first_fit_decreasing(
-            capacities,
-            requirements,
-            purchase_vec,
-            running_vec,
-            L=slot_jobs,
-            purchased_bins=purchased_counts,
-        )
-
-    return purchased_counts
-
-
 def _machine_counts_from_bins(
     bins: Sequence[_BaseBinInfo], num_types: int
 ) -> np.ndarray:
@@ -680,86 +415,6 @@ def build_time_slot_solution(
     return TimeSlotSolution(machine_counts=machine_counts, bins=active_bins)
 
 
-def pack_time_slot_jobs(
-    machine_vector: np.ndarray,
-    capacities: np.ndarray,
-    requirements: np.ndarray,
-    job_counts: np.ndarray,
-    running_costs: np.ndarray | None = None,
-) -> TimeSlotSolution:
-    """Pack a single time slot using FFD with the supplied machine vector."""
-
-    machine_vector = np.asarray(machine_vector, dtype=int).reshape(-1)
-    job_counts = np.asarray(job_counts, dtype=int).reshape(-1)
-
-    M = capacities.shape[1]
-    J = requirements.shape[1]
-    if machine_vector.shape[0] != M:
-        raise ValueError(
-            f"machine_vector must have one entry per machine type ({M}); got {machine_vector.shape[0]}."
-        )
-    if job_counts.shape[0] != J:
-        raise ValueError(
-            f"job_counts must have one entry per job type ({J}); got {job_counts.shape[0]}."
-        )
-
-    running_cost_vec = None
-    if running_costs is not None:
-        running_cost_vec = np.asarray(running_costs, dtype=float).reshape(-1)
-        if running_cost_vec.shape[0] != M:
-            raise ValueError(
-                f"running_costs must have one entry per machine type ({M}); got {running_cost_vec.shape[0]}."
-            )
-
-    zeros = np.zeros(M, dtype=float)
-    result = first_fit_decreasing(
-        capacities,
-        requirements,
-        purchase_costs=zeros,
-        opening_costs=zeros,
-        L=job_counts,
-        opened_bins=machine_vector,
-    )
-
-    slot_solution = build_time_slot_solution(
-        result.bins, M, requirements, running_cost_vec
-    )
-    return slot_solution
-
-
-def pack_time_slot(
-    capacities: np.ndarray,
-    requirements: np.ndarray,
-    job_counts: np.ndarray,
-    purchase_costs: np.ndarray,
-    running_costs: np.ndarray,
-    purchased_counts: np.ndarray,
-) -> TimeSlotSolution:
-    """Pack a time slot using marginal-cost bin selection.
-
-    Machines already listed in ``purchased_counts`` are available for use at
-    running cost only. Additional machines are chosen using the built-in
-    marginal-cost selection rule, which updates ``purchased_counts`` in-place
-    when new machine types are acquired.
-    """
-
-    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
-
-    result = first_fit_decreasing(
-        capacities,
-        requirements,
-        purchase_vec,
-        running_vec,
-        L=job_counts,
-        purchased_bins=purchased_counts,
-    )
-
-    return build_time_slot_solution(
-        result.bins, capacities.shape[1], requirements, running_vec
-    )
-
-
 def _sort_bins_by_utilization(
     bins: List[BinInfo],
     requirements: np.ndarray,
@@ -795,29 +450,6 @@ def _sorted_jobs_for_bin(bin_info: BinInfo, requirements: np.ndarray) -> List[in
         reverse=True,
     )
     return jobs
-
-
-def _solution_cost(
-    time_slot_solutions: Sequence[TimeSlotSolution],
-    purchase_costs: np.ndarray,
-    running_costs: np.ndarray,
-) -> Tuple[float, np.ndarray]:
-    """Compute total cost and implied machine vector from a schedule."""
-
-    if not time_slot_solutions:
-        machine_vec = np.zeros_like(purchase_costs, dtype=int)
-        return 0.0, machine_vec
-
-    z_matrix = np.vstack([slot.machine_counts for slot in time_slot_solutions])
-    machine_vec = np.max(z_matrix, axis=0)
-    purchase_total = float(np.dot(purchase_costs, machine_vec))
-    running_total = float(
-        sum(
-            float(np.dot(running_costs, slot.machine_counts))
-            for slot in time_slot_solutions
-        )
-    )
-    return purchase_total + running_total, machine_vec
 
 
 def _maybe_downsize_bin(
