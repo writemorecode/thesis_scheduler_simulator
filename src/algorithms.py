@@ -643,7 +643,9 @@ def marginal_cost_initial_solution(
     return purchased_counts
 
 
-def _machine_counts_from_bins(bins: Sequence[BinInfo], num_types: int) -> np.ndarray:
+def _machine_counts_from_bins(
+    bins: Sequence[_BaseBinInfo], num_types: int
+) -> np.ndarray:
     """Count how many machines of each type are active in a set of bins."""
 
     counts = np.zeros(num_types, dtype=int)
@@ -653,7 +655,7 @@ def _machine_counts_from_bins(bins: Sequence[BinInfo], num_types: int) -> np.nda
 
 
 def build_time_slot_solution(
-    bins: Sequence[BinInfo],
+    bins: Sequence[_BaseBinInfo],
     num_types: int,
     requirements: np.ndarray,
     running_costs: np.ndarray | None = None,
