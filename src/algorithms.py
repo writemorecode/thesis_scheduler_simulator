@@ -541,9 +541,10 @@ def marginal_cost_bin_selection(
     """
     Build a bin selection function that prioritizes lowest marginal cost.
 
-    The returned callable matches the ``bin_selection_fn`` expected by
-    ``first_fit_decreasing`` and assumes ``requirements`` is ordered the same way
-    that function iterates over job types.
+    The returned callable is useful for custom heuristics; the core packing
+    routines already apply this marginal-cost rule internally. ``requirements``
+    should be ordered the same way that the packing routine iterates over job
+    types.
     """
 
     def _select(job_type: int, capacities: np.ndarray) -> int:
@@ -627,26 +628,16 @@ def marginal_cost_initial_solution(
     if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
-    sorted_requirements = _ffd_sorted_requirements(requirements)
     purchased_counts = np.zeros(M, dtype=int)
 
     for slot_jobs in job_matrix:
-        open_counts = np.zeros(M, dtype=int)
-        selection_fn = marginal_cost_bin_selection(
-            sorted_requirements,
-            purchase_vec,
-            running_vec,
-            purchased_counts,
-            open_counts,
-        )
-
         first_fit_decreasing(
             capacities,
             requirements,
             purchase_vec,
             running_vec,
             L=slot_jobs,
-            bin_selection_fn=selection_fn,
+            purchased_bins=purchased_counts,
         )
 
     return purchased_counts
@@ -741,30 +732,17 @@ def pack_time_slot(
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
     purchased_counts: np.ndarray,
-    sorted_requirements: np.ndarray | None = None,
 ) -> TimeSlotSolution:
     """Pack a time slot using marginal-cost bin selection.
 
-    Machines already listed in ``purchased_counts`` are pre-opened for the
-    slot. Additional machines are chosen using
-    :func:`marginal_cost_bin_selection`, which updates ``purchased_counts``
-    in-place when new machine types are acquired.
+    Machines already listed in ``purchased_counts`` are available for use at
+    running cost only. Additional machines are chosen using the built-in
+    marginal-cost selection rule, which updates ``purchased_counts`` in-place
+    when new machine types are acquired.
     """
-
-    if sorted_requirements is None:
-        sorted_requirements = _ffd_sorted_requirements(requirements)
 
     purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
     running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
-
-    open_counts = np.asarray(purchased_counts, dtype=int).copy()
-    selection_fn = marginal_cost_bin_selection(
-        sorted_requirements,
-        purchase_vec,
-        running_vec,
-        purchased_counts,
-        open_counts,
-    )
 
     result = first_fit_decreasing(
         capacities,
@@ -772,11 +750,8 @@ def pack_time_slot(
         purchase_vec,
         running_vec,
         L=job_counts,
-        opened_bins=open_counts,
-        bin_selection_fn=selection_fn,
+        purchased_bins=purchased_counts,
     )
-
-    purchased_counts[:] = np.maximum(purchased_counts, open_counts)
 
     return build_time_slot_solution(
         result.bins, capacities.shape[1], requirements, running_vec

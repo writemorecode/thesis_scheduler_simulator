@@ -6,10 +6,7 @@ from typing import Callable
 
 import numpy as np
 
-from algorithms import (
-    ScheduleResult,
-    schedule_jobs_peak_demand,
-)
+from algorithms import ScheduleResult
 from ruin_recreate import ruin_recreate_schedule
 from problem_generation import ProblemInstance, generate_random_instance
 
@@ -49,9 +46,6 @@ def main():
 
     print("Ruin-recreate scheduler:")
     run_scheduler(problem, lambda prob: ruin_recreate_schedule(prob, num_iterations=20))
-    print()
-    print("Peak-demand slot scheduler:")
-    run_scheduler(problem, schedule_jobs_peak_demand)
 
 
 if __name__ == "__main__":

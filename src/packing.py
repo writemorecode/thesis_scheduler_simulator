@@ -75,6 +75,17 @@ def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
     return arr
 
 
+def _prepare_count_vector(
+    vec: np.ndarray | Sequence[int], length: int, name: str
+) -> np.ndarray:
+    arr = np.asarray(vec, dtype=int).reshape(-1)
+    if arr.shape[0] != length:
+        raise ValueError(f"{name} must have length {length}, got {arr.shape[0]}")
+    if np.any(arr < 0):
+        raise ValueError(f"{name} entries must be non-negative.")
+    return arr
+
+
 def _sort_items_decreasing(
     R: np.ndarray, L: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -106,6 +117,55 @@ def _sort_items_decreasing(
     return R_sorted, L_sorted, sorted_indices
 
 
+def _select_bin_type_marginal_cost(
+    item_type: int,
+    demand: np.ndarray,
+    capacities: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    purchased_counts: np.ndarray,
+    open_counts: np.ndarray,
+) -> tuple[int, bool]:
+    """
+    Choose the bin type with the lowest marginal cost for ``demand``.
+
+    Returns the selected bin type and whether a new purchase is required.
+    """
+
+    fits_mask = np.all(capacities >= demand, axis=0)
+    if not np.any(fits_mask):
+        raise ValueError(
+            f"Item type {item_type} does not fit in any available bin type."
+        )
+
+    best_type = None
+    best_key = None
+    best_requires_purchase = False
+
+    for bin_type, fits in enumerate(fits_mask):
+        if not fits:
+            continue
+
+        requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
+        marginal_cost = (
+            opening_costs[bin_type]
+            if not requires_purchase
+            else purchase_costs[bin_type] + opening_costs[bin_type]
+        )
+        key = (marginal_cost, opening_costs[bin_type], purchase_costs[bin_type])
+        if best_key is None or key < best_key:
+            best_key = key
+            best_type = bin_type
+            best_requires_purchase = requires_purchase
+
+    if best_type is None:
+        raise ValueError(
+            f"Failed to choose a bin type for item type {item_type} using marginal costs."
+        )
+
+    return best_type, best_requires_purchase
+
+
 def first_fit(
     C: np.ndarray,
     R: np.ndarray,
@@ -113,7 +173,7 @@ def first_fit(
     opening_costs: np.ndarray,
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
-    bin_selection_fn: BinSelectionFn | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
     """
     Run the first-fit heterogeneous multidimensional bin packing heuristic.
@@ -132,12 +192,11 @@ def first_fit(
         Length J column vector with the number of items (per type) to pack.
     opened_bins : array-like of shape (M,), optional
         Pre-opened bin counts per type. These bins are available before packing starts
-        and their purchase+opening cost is charged up front.
-    bin_selection_fn : Callable[[int, np.ndarray], int], optional
-        Function that chooses which bin type to open when none of the existing bins fit.
-        Receives the item type index and the capacity matrix ``C`` and should return the
-        index of the bin type to open. Defaults to selecting the cheapest (by opening
-        cost) bin type that can accommodate the item.
+        and incur only the opening cost if they were already purchased.
+    purchased_bins : array-like of shape (M,), optional
+        Bins already purchased but not necessarily opened. When provided, the marginal
+        cost rule will prefer reusing these machines (opening cost only) before buying
+        additional ones. This vector is updated in place when a new purchase occurs.
 
     Returns
     -------
@@ -171,20 +230,27 @@ def first_fit(
     if L.shape[0] != J:
         raise ValueError(f"L must have length {J}, got {L.shape[0]}.")
 
-    per_bin_costs = purchase_costs + opening_costs
+    opened_bins_vec = (
+        np.zeros(M, dtype=int)
+        if opened_bins is None
+        else _prepare_count_vector(opened_bins, M, "opened_bins")
+    )
 
-    opened_bins_vec = None
-    if opened_bins is not None:
-        opened_bins_vec = np.asarray(opened_bins, dtype=int).reshape(-1)
-        if opened_bins_vec.shape[0] != M:
-            raise ValueError(
-                f"opened_bins must have one entry per bin type ({M}); got {opened_bins_vec.shape[0]}."
-            )
-        if np.any(opened_bins_vec < 0):
-            raise ValueError("opened_bins entries must be non-negative.")
+    purchased_counts = (
+        np.zeros(M, dtype=int)
+        if purchased_bins is None
+        else _prepare_count_vector(purchased_bins, M, "purchased_bins")
+    )
+    initial_purchased = purchased_counts.copy()
+    purchased_counts[:] = np.maximum(purchased_counts, opened_bins_vec)
+
+    open_counts = opened_bins_vec.copy()
+    preopened_extra = np.maximum(open_counts - initial_purchased, 0)
 
     bins: List[BinInfo] = []
-    total_cost = 0.0
+    total_cost = float(np.dot(open_counts, opening_costs))
+    if np.any(preopened_extra):
+        total_cost += float(np.dot(preopened_extra, purchase_costs))
 
     def _create_bin(bin_type: int) -> BinInfo:
         capacity = C[:, [bin_type]].copy()
@@ -197,31 +263,9 @@ def first_fit(
         bins.append(bin_info)
         return bin_info
 
-    if opened_bins_vec is not None:
-        total_cost += float(np.dot(opened_bins_vec, per_bin_costs))
-        for bin_type, count in enumerate(opened_bins_vec):
-            for _ in range(int(count)):
-                _create_bin(bin_type)
-
-    running_costs_sorted_indicies = np.argsort(opening_costs)
-    C_sorted = C[:, running_costs_sorted_indicies]
-
-    def _default_bin_selection(item_type: int, C: np.ndarray) -> int:
-        demand_vec = R[:, [item_type]].reshape(-1, 1)
-        feasible_bin_types = np.all(C_sorted >= demand_vec, axis=0)
-        if not np.any(feasible_bin_types):
-            raise ValueError(
-                f"Item type {item_type} does not fit in any available bin type."
-            )
-        best_bin_type = np.argmax(feasible_bin_types)
-        bin_vector = C_sorted[:, best_bin_type].reshape(-1, 1)
-        if not np.all(bin_vector >= demand_vec):
-            raise ValueError(
-                f"Selected invalid bin type {best_bin_type} for item type {item_type}"
-            )
-        return running_costs_sorted_indicies[best_bin_type]
-
-    select_bin_type = bin_selection_fn or _default_bin_selection
+    for bin_type, count in enumerate(open_counts):
+        for _ in range(int(count)):
+            _create_bin(bin_type)
 
     for j in range(J):
         demand = R[:, [j]]
@@ -239,17 +283,27 @@ def first_fit(
             if placed:
                 continue
 
-            bin_type = select_bin_type(j, C)
-            if not (0 <= bin_type < M):
-                raise ValueError(
-                    f"Bin selection function returned invalid bin type {bin_type} for item type {j}."
-                )
-            if not np.all(C[:, [bin_type]] >= demand):
-                raise ValueError(
-                    f"Bin selection function chose type {bin_type}, but item type {j} does not fit in it."
-                )
+            bin_type, requires_purchase = _select_bin_type_marginal_cost(
+                j,
+                demand,
+                C,
+                purchase_costs,
+                opening_costs,
+                purchased_counts,
+                open_counts,
+            )
+
+            incremental_cost = (
+                float(opening_costs[bin_type])
+                if not requires_purchase
+                else float(purchase_costs[bin_type] + opening_costs[bin_type])
+            )
+            total_cost += incremental_cost
+            open_counts[bin_type] += 1
+            if open_counts[bin_type] > purchased_counts[bin_type]:
+                purchased_counts[bin_type] = open_counts[bin_type]
+
             bin_info = _create_bin(bin_type)
-            total_cost += float(per_bin_costs[bin_type])
             bin_info.remaining_capacity -= demand
             bin_info.item_counts[j] += 1
             bin_info.update_utilization_cache()
@@ -264,7 +318,7 @@ def first_fit_decreasing(
     opening_costs: np.ndarray,
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
-    bin_selection_fn: BinSelectionFn | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
     """
     Run first-fit after sorting job types in non-increasing order of resource demand.
@@ -274,7 +328,7 @@ def first_fit_decreasing(
     before smaller ones. The returned bin contents are mapped back to the original job
     ordering before being returned.
 
-    Parameters mirror :func:`first_fit`; ``opened_bins`` and ``bin_selection_fn`` are
+    Parameters mirror :func:`first_fit`; ``opened_bins`` and ``purchased_bins`` are
     forwarded directly without modification.
     """
 
@@ -288,7 +342,7 @@ def first_fit_decreasing(
         opening_costs,
         L_sorted,
         opened_bins=opened_bins,
-        bin_selection_fn=bin_selection_fn,
+        purchased_bins=purchased_bins,
     )
 
     if J > 0:
@@ -307,15 +361,15 @@ def best_fit(
     opening_costs: np.ndarray,
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
-    bin_selection_fn: BinSelectionFn | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
     """
     Run the best-fit heterogeneous multidimensional bin packing heuristic.
 
     Items are placed into the existing bin that yields the highest utilization
     (i.e., the tightest fit) while respecting all capacity dimensions. When no
-    current bin fits, a new bin type is chosen using ``bin_selection_fn`` (or
-    the default cost-based selector) in the same manner as :func:`first_fit`.
+    current bin fits, a new bin type is chosen using a marginal-cost rule that
+    prefers already-purchased bin types before buying new ones.
     """
 
     C = np.asarray(C, dtype=float)
@@ -341,20 +395,27 @@ def best_fit(
     if L.shape[0] != J:
         raise ValueError(f"L must have length {J}, got {L.shape[0]}.")
 
-    per_bin_costs = purchase_costs + opening_costs
+    opened_bins_vec = (
+        np.zeros(M, dtype=int)
+        if opened_bins is None
+        else _prepare_count_vector(opened_bins, M, "opened_bins")
+    )
 
-    opened_bins_vec = None
-    if opened_bins is not None:
-        opened_bins_vec = np.asarray(opened_bins, dtype=int).reshape(-1)
-        if opened_bins_vec.shape[0] != M:
-            raise ValueError(
-                f"opened_bins must have one entry per bin type ({M}); got {opened_bins_vec.shape[0]}."
-            )
-        if np.any(opened_bins_vec < 0):
-            raise ValueError("opened_bins entries must be non-negative.")
+    purchased_counts = (
+        np.zeros(M, dtype=int)
+        if purchased_bins is None
+        else _prepare_count_vector(purchased_bins, M, "purchased_bins")
+    )
+    initial_purchased = purchased_counts.copy()
+    purchased_counts[:] = np.maximum(purchased_counts, opened_bins_vec)
+
+    open_counts = opened_bins_vec.copy()
+    preopened_extra = np.maximum(open_counts - initial_purchased, 0)
 
     bins: List[BinInfo] = []
-    total_cost = 0.0
+    total_cost = float(np.dot(open_counts, opening_costs))
+    if np.any(preopened_extra):
+        total_cost += float(np.dot(preopened_extra, purchase_costs))
 
     def _create_bin(bin_type: int) -> BinInfo:
         capacity = C[:, [bin_type]].copy()
@@ -367,31 +428,9 @@ def best_fit(
         bins.append(bin_info)
         return bin_info
 
-    if opened_bins_vec is not None:
-        total_cost += float(np.dot(opened_bins_vec, per_bin_costs))
-        for bin_type, count in enumerate(opened_bins_vec):
-            for _ in range(int(count)):
-                _create_bin(bin_type)
-
-    running_costs_sorted_indicies = np.argsort(opening_costs)
-    C_sorted = C[:, running_costs_sorted_indicies]
-
-    def _default_bin_selection(item_type: int, C: np.ndarray) -> int:
-        demand_vec = R[:, [item_type]].reshape(-1, 1)
-        feasible_bin_types = np.all(C_sorted >= demand_vec, axis=0)
-        if not np.any(feasible_bin_types):
-            raise ValueError(
-                f"Item type {item_type} does not fit in any available bin type."
-            )
-        best_bin_type = np.argmax(feasible_bin_types)
-        bin_vector = C_sorted[:, best_bin_type].reshape(-1, 1)
-        if not np.all(bin_vector >= demand_vec):
-            raise ValueError(
-                f"Selected invalid bin type {best_bin_type} for item type {item_type}"
-            )
-        return running_costs_sorted_indicies[best_bin_type]
-
-    select_bin_type = bin_selection_fn or _default_bin_selection
+    for bin_type, count in enumerate(open_counts):
+        for _ in range(int(count)):
+            _create_bin(bin_type)
 
     for j in range(J):
         demand = R[:, [j]]
@@ -432,17 +471,27 @@ def best_fit(
                 bin_info.update_utilization_cache()
                 continue
 
-            bin_type = select_bin_type(j, C)
-            if not (0 <= bin_type < M):
-                raise ValueError(
-                    f"Bin selection function returned invalid bin type {bin_type} for item type {j}."
-                )
-            if not np.all(C[:, [bin_type]] >= demand):
-                raise ValueError(
-                    f"Bin selection function chose type {bin_type}, but item type {j} does not fit in it."
-                )
+            bin_type, requires_purchase = _select_bin_type_marginal_cost(
+                j,
+                demand,
+                C,
+                purchase_costs,
+                opening_costs,
+                purchased_counts,
+                open_counts,
+            )
+
+            incremental_cost = (
+                float(opening_costs[bin_type])
+                if not requires_purchase
+                else float(purchase_costs[bin_type] + opening_costs[bin_type])
+            )
+            total_cost += incremental_cost
+            open_counts[bin_type] += 1
+            if open_counts[bin_type] > purchased_counts[bin_type]:
+                purchased_counts[bin_type] = open_counts[bin_type]
+
             bin_info = _create_bin(bin_type)
-            total_cost += float(per_bin_costs[bin_type])
             bin_info.remaining_capacity -= demand
             bin_info.item_counts[j] += 1
             bin_info.update_utilization_cache()
@@ -457,13 +506,14 @@ def best_fit_decreasing(
     opening_costs: np.ndarray,
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
-    bin_selection_fn: BinSelectionFn | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
     """
     Run best-fit after sorting job types in non-increasing order of resource demand.
 
     Sorting mirrors :func:`first_fit_decreasing`; bin placement uses
-    :func:`best_fit`.
+    :func:`best_fit`. Parameters mirror :func:`best_fit`; ``opened_bins`` and
+    ``purchased_bins`` are forwarded without modification.
     """
 
     R_sorted, L_sorted, sorted_indices = _sort_items_decreasing(R, L)
@@ -476,7 +526,7 @@ def best_fit_decreasing(
         opening_costs,
         L_sorted,
         opened_bins=opened_bins,
-        bin_selection_fn=bin_selection_fn,
+        purchased_bins=purchased_bins,
     )
 
     if J > 0:
