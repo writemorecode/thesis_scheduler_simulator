@@ -661,7 +661,7 @@ def _machine_counts_from_bins(bins: Sequence[BinInfo], num_types: int) -> np.nda
     return counts
 
 
-def _build_time_slot_solution(
+def build_time_slot_solution(
     bins: Sequence[BinInfo],
     num_types: int,
     requirements: np.ndarray,
@@ -687,7 +687,7 @@ def _build_time_slot_solution(
     return TimeSlotSolution(machine_counts=machine_counts, bins=active_bins)
 
 
-def _pack_time_slot_jobs(
+def pack_time_slot_jobs(
     machine_vector: np.ndarray,
     capacities: np.ndarray,
     requirements: np.ndarray,
@@ -728,22 +728,13 @@ def _pack_time_slot_jobs(
         opened_bins=machine_vector,
     )
 
-    slot_solution = _build_time_slot_solution(
+    slot_solution = build_time_slot_solution(
         result.bins, M, requirements, running_cost_vec
     )
-    if np.any(slot_solution.machine_counts > machine_vector):
-        # print(
-        #    "WARNING: Packing exceeded provided machine vector; the upper bound is insufficient."
-        # )
-        # raise ValueError(
-        #     "Packing exceeded provided machine vector; the upper bound is insufficient."
-        # )
-        pass
-
     return slot_solution
 
 
-def _pack_time_slot_marginal_cost(
+def pack_time_slot(
     capacities: np.ndarray,
     requirements: np.ndarray,
     job_counts: np.ndarray,
@@ -787,32 +778,9 @@ def _pack_time_slot_marginal_cost(
 
     purchased_counts[:] = np.maximum(purchased_counts, open_counts)
 
-    return _build_time_slot_solution(
+    return build_time_slot_solution(
         result.bins, capacities.shape[1], requirements, running_vec
     )
-
-
-def _pack_all_time_slots(
-    machine_vector: np.ndarray,
-    capacities: np.ndarray,
-    requirements: np.ndarray,
-    job_matrix: np.ndarray,
-    running_costs: np.ndarray | None = None,
-) -> List[TimeSlotSolution]:
-    """Pack every time slot independently using the provided machine vector."""
-
-    solutions = []
-    for job_counts in job_matrix:
-        solutions.append(
-            _pack_time_slot_jobs(
-                machine_vector,
-                capacities,
-                requirements,
-                job_counts,
-                running_costs=running_costs,
-            )
-        )
-    return solutions
 
 
 def _sort_bins_by_utilization(
@@ -873,22 +841,6 @@ def _solution_cost(
         )
     )
     return purchase_total + running_total, machine_vec
-
-
-def _solution_signature(
-    time_slot_solutions: Sequence[TimeSlotSolution],
-) -> Tuple[Tuple[Tuple[int, ...], Tuple[Tuple[int, Tuple[int, ...]], ...]], ...]:
-    """Hashable signature representing an entire schedule."""
-
-    slot_entries = []
-    for slot in time_slot_solutions:
-        machine_counts = tuple(int(v) for v in slot.machine_counts.tolist())
-        bin_entries = tuple(
-            (bin_info.bin_type, tuple(int(v) for v in bin_info.item_counts.tolist()))
-            for bin_info in slot.bins
-        )
-        slot_entries.append((machine_counts, bin_entries))
-    return tuple(slot_entries)
 
 
 def _maybe_downsize_bin(
@@ -1046,332 +998,3 @@ def repack_jobs(
 
     new_counts = _machine_counts_from_bins(bins, running_costs.shape[0])
     return TimeSlotSolution(machine_counts=new_counts, bins=bins)
-
-
-def schedule_jobs_peak_demand(problem: ProblemInstance) -> ScheduleResult:
-    """
-    Schedule jobs by seeding with the most resource-intensive time slot.
-
-    The algorithm computes the per-slot resource totals ``A = R @ L.T`` and picks
-    the column with the largest total demand. That slot is packed first with no
-    pre-opened machines; the resulting machine vector is then used as the set of
-    open bins for packing every other time slot (which may open additional
-    machines if needed). The final machine vector is the maximum count across
-    all packed slots.
-    """
-
-    capacities = np.asarray(problem.capacities, dtype=float)
-    requirements = np.asarray(problem.requirements, dtype=float)
-    job_matrix = np.asarray(problem.job_counts, dtype=int)
-
-    purchase_costs = np.asarray(problem.purchase_costs, dtype=float).reshape(-1)
-    running_costs = np.asarray(problem.running_costs, dtype=float).reshape(-1)
-
-    if capacities.ndim != 2 or requirements.ndim != 2:
-        raise ValueError("C and R must be 2D matrices.")
-    if capacities.shape[0] != requirements.shape[0]:
-        raise ValueError("C and R must have the same number of resource dimensions.")
-
-    if job_matrix.ndim == 1:
-        job_matrix = job_matrix.reshape(1, -1)
-    elif job_matrix.ndim != 2:
-        raise ValueError("L must be a vector or a 2D matrix.")
-    if np.any(job_matrix < 0):
-        raise ValueError("Job counts in L must be non-negative.")
-
-    K, M = capacities.shape
-    K_req, J = requirements.shape
-    if K != K_req:
-        raise ValueError(
-            f"C and R must describe the same number of resources. Got {K} and {K_req}."
-        )
-    if job_matrix.shape[1] != J:
-        raise ValueError(
-            f"L must contain {J} job-type columns; got {job_matrix.shape[1]}."
-        )
-    if purchase_costs.shape[0] != M or running_costs.shape[0] != M:
-        raise ValueError("Cost vectors must have one entry per machine type.")
-
-    num_slots = job_matrix.shape[0]
-    if num_slots == 0:
-        machine_vector = np.zeros(M, dtype=int)
-        return ScheduleResult(
-            total_cost=0.0,
-            machine_vector=machine_vector,
-            upper_bound=None,
-            time_slot_solutions=[],
-        )
-
-    demand_matrix = requirements @ job_matrix.T  # Shape (K, T)
-    per_slot_totals = np.sum(demand_matrix, axis=0)
-    peak_slot_index = int(np.argsort(-per_slot_totals)[0])
-
-    initial_solution = _pack_time_slot_jobs(
-        machine_vector=np.zeros(M, dtype=int),
-        capacities=capacities,
-        requirements=requirements,
-        job_counts=job_matrix,
-        running_costs=running_costs,
-    )
-    base_machine_vector = initial_solution.machine_counts
-
-    time_slot_solutions: List[TimeSlotSolution] = []
-    for slot_idx in range(num_slots):
-        if slot_idx == peak_slot_index:
-            slot_solution = initial_solution
-            time_slot_solutions.append(slot_solution)
-        else:
-            slot_solution = _pack_time_slot_jobs(
-                base_machine_vector,
-                capacities,
-                requirements,
-                job_matrix[slot_idx],
-                running_costs=running_costs,
-                purchase_costs=purchase_costs,
-            )
-            repacked_slot_solution = repack_jobs(
-                slot_solution, capacities, requirements, running_costs
-            )
-            time_slot_solutions.append(repacked_slot_solution)
-
-    total_cost, machine_vector = _solution_cost(
-        time_slot_solutions, purchase_costs, running_costs
-    )
-
-    return ScheduleResult(
-        total_cost=total_cost,
-        machine_vector=machine_vector,
-        upper_bound=None,
-        time_slot_solutions=time_slot_solutions,
-    )
-
-
-def schedule_jobs(
-    problem: ProblemInstance,
-    max_iterations: int = 25,
-    initial_method: str = "upper_bound",
-) -> ScheduleResult:
-    """
-    Scheduler loop implementing the method outlined in ``method.typ``.
-
-    Parameters follow the fields in :class:`ProblemInstance`: ``capacities`` and
-    ``requirements`` describe machine capacities and job requirements, ``job_counts``
-    lists scheduled jobs per time slot, ``purchase_costs`` corresponds to
-    :math:`c^p`, and ``running_costs`` to the per time slot operational cost
-    :math:`c^r`. The ``initial_method`` parameter selects how to construct the first
-    machine vector; supported values are ``"upper_bound"`` and ``"marginal_cost"``.
-    """
-
-    capacities = np.asarray(problem.capacities, dtype=float)
-    requirements = np.asarray(problem.requirements, dtype=float)
-    job_matrix = np.asarray(problem.job_counts, dtype=int)
-
-    purchase_costs = problem.purchase_costs
-    running_costs = problem.running_costs
-
-    if capacities.ndim != 2 or requirements.ndim != 2:
-        raise ValueError("C and R must be 2D matrices.")
-    if capacities.shape[0] != requirements.shape[0]:
-        raise ValueError("C and R must have the same number of resource dimensions.")
-
-    if job_matrix.ndim == 1:
-        job_matrix = job_matrix.reshape(1, -1)
-    elif job_matrix.ndim != 2:
-        raise ValueError("L must be a vector or a 2D matrix.")
-    if np.any(job_matrix < 0):
-        raise ValueError("Job counts in L must be non-negative.")
-
-    _, M = capacities.shape
-    _, J = requirements.shape
-    if job_matrix.shape[1] != J:
-        raise ValueError(
-            f"L must contain {J} job-type columns; got {job_matrix.shape[1]}."
-        )
-
-    purchase_costs = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    running_costs = np.asarray(running_costs, dtype=float).reshape(-1)
-    if purchase_costs.shape[0] != M or running_costs.shape[0] != M:
-        raise ValueError("Cost vectors must have one entry per machine type.")
-
-    upper_bound = machines_upper_bound(capacities, requirements, job_matrix)
-
-    if initial_method == "upper_bound":
-        machine_vector = upper_bound.copy()
-    elif initial_method == "marginal_cost":
-        machine_vector = marginal_cost_initial_solution(
-            capacities, requirements, job_matrix, purchase_costs, running_costs
-        )
-    else:
-        raise ValueError(
-            f'Unknown initial_method "{initial_method}". '
-            'Supported options are "upper_bound" and "marginal_cost".'
-        )
-
-    if np.any(machine_vector > upper_bound):
-        raise ValueError(
-            "Initial machine vector exceeds the computed upper bound; "
-            "the marginal cost heuristic produced an inconsistent result."
-        )
-
-    time_slot_solutions = _pack_all_time_slots(
-        machine_vector, capacities, requirements, job_matrix, running_costs
-    )
-    total_cost, machine_vector = _solution_cost(
-        time_slot_solutions, purchase_costs, running_costs
-    )
-
-    current_signature = _solution_signature(time_slot_solutions)
-    seen_solutions = {current_signature}
-
-    for _ in range(max_iterations):
-        neighbor_solutions = [
-            repack_jobs(slot, capacities, requirements, running_costs)
-            for slot in time_slot_solutions
-        ]
-        neighbor_signature = _solution_signature(neighbor_solutions)
-        if neighbor_signature == current_signature:
-            break
-
-        neighbor_cost, neighbor_machine_vector = _solution_cost(
-            neighbor_solutions, purchase_costs, running_costs
-        )
-
-        if neighbor_signature in seen_solutions:
-            break
-
-        if np.any(neighbor_machine_vector > upper_bound):
-            break
-
-        if not np.array_equal(neighbor_machine_vector, machine_vector):
-            neighbor_solutions = _pack_all_time_slots(
-                neighbor_machine_vector,
-                capacities,
-                requirements,
-                job_matrix,
-                running_costs,
-            )
-            neighbor_cost, neighbor_machine_vector = _solution_cost(
-                neighbor_solutions, purchase_costs, running_costs
-            )
-            neighbor_signature = _solution_signature(neighbor_solutions)
-
-        if neighbor_signature in seen_solutions:
-            break
-
-        if neighbor_cost < total_cost:
-            time_slot_solutions = neighbor_solutions
-            total_cost = neighbor_cost
-            machine_vector = neighbor_machine_vector
-            seen_solutions.add(neighbor_signature)
-            current_signature = neighbor_signature
-        else:
-            break
-
-    return ScheduleResult(
-        total_cost=total_cost,
-        machine_vector=machine_vector,
-        upper_bound=upper_bound,
-        time_slot_solutions=time_slot_solutions,
-    )
-
-
-def schedule_jobs_marginal_cost(
-    problem: ProblemInstance,
-    max_iterations: int = 25,
-) -> ScheduleResult:
-    """
-    Version of 'schedule_jobs' which uses marginal-cost based method for
-    computing initial machine vector.
-    """
-
-    capacities = np.asarray(problem.capacities, dtype=float)
-    requirements = np.asarray(problem.requirements, dtype=float)
-    job_matrix = np.asarray(problem.job_counts, dtype=int)
-
-    purchase_costs = problem.purchase_costs
-    running_costs = problem.running_costs
-
-    if capacities.ndim != 2 or requirements.ndim != 2:
-        raise ValueError("C and R must be 2D matrices.")
-    if capacities.shape[0] != requirements.shape[0]:
-        raise ValueError("C and R must have the same number of resource dimensions.")
-
-    if job_matrix.ndim == 1:
-        job_matrix = job_matrix.reshape(1, -1)
-    elif job_matrix.ndim != 2:
-        raise ValueError("L must be a vector or a 2D matrix.")
-    if np.any(job_matrix < 0):
-        raise ValueError("Job counts in L must be non-negative.")
-
-    _, M = capacities.shape
-    _, J = requirements.shape
-    if job_matrix.shape[1] != J:
-        raise ValueError(
-            f"L must contain {J} job-type columns; got {job_matrix.shape[1]}."
-        )
-
-    purchase_costs = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    running_costs = np.asarray(running_costs, dtype=float).reshape(-1)
-    if purchase_costs.shape[0] != M or running_costs.shape[0] != M:
-        raise ValueError("Cost vectors must have one entry per machine type.")
-
-    machine_vector = marginal_cost_initial_solution(
-        capacities, requirements, job_matrix, purchase_costs, running_costs
-    )
-    time_slot_solutions = _pack_all_time_slots(
-        machine_vector, capacities, requirements, job_matrix, running_costs
-    )
-    total_cost, machine_vector = _solution_cost(
-        time_slot_solutions, purchase_costs, running_costs
-    )
-
-    current_signature = _solution_signature(time_slot_solutions)
-    seen_solutions = {current_signature}
-
-    for _ in range(max_iterations):
-        neighbor_solutions = [
-            repack_jobs(slot, capacities, requirements, running_costs)
-            for slot in time_slot_solutions
-        ]
-        neighbor_signature = _solution_signature(neighbor_solutions)
-        if neighbor_signature == current_signature:
-            break
-
-        neighbor_cost, neighbor_machine_vector = _solution_cost(
-            neighbor_solutions, purchase_costs, running_costs
-        )
-
-        if neighbor_signature in seen_solutions:
-            break
-
-        if not np.array_equal(neighbor_machine_vector, machine_vector):
-            neighbor_solutions = _pack_all_time_slots(
-                neighbor_machine_vector,
-                capacities,
-                requirements,
-                job_matrix,
-                running_costs,
-            )
-            neighbor_cost, neighbor_machine_vector = _solution_cost(
-                neighbor_solutions, purchase_costs, running_costs
-            )
-            neighbor_signature = _solution_signature(neighbor_solutions)
-
-        if neighbor_signature in seen_solutions:
-            break
-
-        if neighbor_cost < total_cost:
-            time_slot_solutions = neighbor_solutions
-            total_cost = neighbor_cost
-            machine_vector = neighbor_machine_vector
-            seen_solutions.add(neighbor_signature)
-            current_signature = neighbor_signature
-        else:
-            break
-
-    return ScheduleResult(
-        total_cost=total_cost,
-        machine_vector=machine_vector,
-        upper_bound=None,
-        time_slot_solutions=time_slot_solutions,
-    )

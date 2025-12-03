@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import List, Sequence
+from typing import Sequence
 
 import numpy as np
 
@@ -9,29 +9,18 @@ from algorithms import (
     BinInfo,
     ScheduleResult,
     TimeSlotSolution,
-    _build_time_slot_solution,
+    build_time_slot_solution,
     _machine_counts_from_bins,
-    _pack_all_time_slots,
     _solution_cost,
     _sort_bins_by_utilization,
-    marginal_cost_initial_solution,
+    pack_time_slot,
     repack_jobs,
 )
 from packing import best_fit_decreasing
 from problem_generation import ProblemInstance
 
 
-def _fraction(iteration: int, total_iterations: int) -> float:
-    """Cosine-decay schedule that starts at 1 and ends at 0."""
-
-    if total_iterations <= 1:
-        return 1.0
-    ratio = iteration / float(total_iterations - 1)
-    # Cosine decay: smooth drop from 1 to 0 as iterations progress.
-    return float(max(0.0, min(1.0, 0.5 * (1.0 + math.cos(math.pi * ratio)))))
-
-
-def _copy_bins(bins: Sequence[BinInfo]) -> List[BinInfo]:
+def _copy_bins(bins: Sequence[BinInfo]) -> list[BinInfo]:
     """Deep copy bins so we can mutate during ruin/recreate."""
 
     return [
@@ -45,31 +34,62 @@ def _copy_bins(bins: Sequence[BinInfo]) -> List[BinInfo]:
     ]
 
 
-def _ruin_slot_bins(
+def _ruin_lowest_utilization_bins(
     slot_solution: TimeSlotSolution,
     requirements: np.ndarray,
-    fraction: float,
+    max_fraction: float,
     rng: np.random.Generator,
-) -> List[BinInfo]:
+) -> list[BinInfo]:
     """
-    Remove the lowest-utilization bins according to ``fraction``.
+    Remove the lowest-utilization bins up to ``max_fraction`` of available bins.
 
     Returns the list of bins to keep (post-ruin); removed bins are discarded.
     """
 
-    if fraction <= 0.0 or not slot_solution.bins:
-        return _copy_bins(slot_solution.bins)
-
     bins = _copy_bins(slot_solution.bins)
 
     # Shuffle first to randomize tie ordering among equally utilized bins.
-    rng.shuffle(np.array(bins))
+    rng.shuffle(bins)
     _sort_bins_by_utilization(bins, requirements)
 
-    ruin_count = int(math.ceil(fraction * len(bins)))
-    ruin_count = min(ruin_count, len(bins))
+    num_bins = len(bins)
+    if max_fraction <= 0.0 or num_bins == 0:
+        ruin_count = 0
+    else:
+        max_removal = min(num_bins, int(math.ceil(max_fraction * num_bins)))
+        ruin_count = int(rng.integers(0, max_removal + 1))
+
+    if ruin_count == 0:
+        return bins
 
     return bins[ruin_count:]
+
+
+def _ruin_random_bins(
+    slot_solution: TimeSlotSolution,
+    max_fraction: float,
+    rng: np.random.Generator,
+) -> list[BinInfo]:
+    """
+    Remove a random subset of open bins, limited by ``max_fraction``.
+
+    Returns the list of bins to keep (post-ruin); removed bins are discarded.
+    """
+
+    bins = _copy_bins(slot_solution.bins)
+
+    num_bins = len(bins)
+    if max_fraction <= 0.0 or num_bins == 0:
+        ruin_count = 0
+    else:
+        max_removal = min(num_bins, int(math.ceil(max_fraction * num_bins)))
+        ruin_count = int(rng.integers(0, max_removal + 1))
+
+    if ruin_count == 0:
+        return bins
+
+    removed_indices = set(rng.choice(len(bins), size=ruin_count, replace=False))
+    return [bin_info for idx, bin_info in enumerate(bins) if idx not in removed_indices]
 
 
 def _recreate_slot(
@@ -97,7 +117,7 @@ def _recreate_slot(
         opened_bins=opened_bins,
     )
 
-    return _build_time_slot_solution(
+    return build_time_slot_solution(
         bfd_result.bins, capacities.shape[1], requirements, running_costs
     )
 
@@ -105,6 +125,7 @@ def _recreate_slot(
 def ruin_recreate_schedule(
     problem: ProblemInstance,
     num_iterations: int = 50,
+    alpha: float = 0.50,
     *,
     rng: np.random.Generator | None = None,
 ) -> ScheduleResult:
@@ -112,10 +133,12 @@ def ruin_recreate_schedule(
     Schedule jobs using a ruin-and-recreate metaheuristic.
 
     The procedure starts from the marginal-cost machine vector, then iteratively
-    improves it by (a) re-packing each slot, (b) ruining a fraction of the worst
-    bins, and (c) recreating slot packings with best-fit decreasing. Inferior
+    improves it by (a) re-packing each slot, (b) ruining bins using one of two
+    random operators (lowest utilization or random removal), and (c) recreating
+    slot packings with best-fit decreasing. Inferior
     candidates are accepted with probability following a cosine decay from 1 to
-    0, allowing exploration early and converging later.
+    0, allowing exploration early and converging later. ``alpha`` limits the
+    maximum fraction of bins the ruin step may remove.
     """
 
     rng = rng or np.random.default_rng()
@@ -148,23 +171,32 @@ def ruin_recreate_schedule(
     if purchase_costs.shape[0] != M or running_costs.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
-    machine_vector = marginal_cost_initial_solution(
-        capacities, requirements, job_matrix, purchase_costs, running_costs
-    )
+    if not 0.0 <= alpha <= 1.0:
+        raise ValueError("alpha must be in [0, 1].")
 
-    time_slot_solutions = _pack_all_time_slots(
-        machine_vector, capacities, requirements, job_matrix, running_costs
-    )
+    purchased_counts = np.zeros(M, dtype=int)
+    initial_solution = [
+        pack_time_slot(
+            capacities=capacities,
+            requirements=requirements,
+            job_counts=time_slot,
+            purchase_costs=purchase_costs,
+            running_costs=running_costs,
+            purchased_counts=purchased_counts,
+        )
+        for time_slot in job_matrix
+    ]
+
+    print(f"Purchased machines: {purchased_counts}")
+
     best_cost, best_machine_vector = _solution_cost(
-        time_slot_solutions, purchase_costs, running_costs
+        initial_solution, purchase_costs, running_costs
     )
-    print(f"x:\t{machine_vector}\tcost: {best_cost}")
-    best_slots = [slot.copy() for slot in time_slot_solutions]
-    current_slots = [slot.copy() for slot in time_slot_solutions]
+    print(f"x:\t{best_machine_vector}\tcost: {best_cost}")
+    best_slots = [slot.copy() for slot in initial_solution]
+    current_slots = [slot.copy() for slot in initial_solution]
 
     for iteration in range(num_iterations):
-        p = _fraction(iteration, num_iterations)
-
         repacked_slots = [
             repack_jobs(slot, capacities, requirements, running_costs)
             for slot in current_slots
@@ -173,9 +205,14 @@ def ruin_recreate_schedule(
             repacked_slots, purchase_costs, running_costs
         )
 
-        ruined_slots: List[TimeSlotSolution] = []
+        ruined_slots: list[TimeSlotSolution] = []
+        ruin_ops = (
+            lambda s: _ruin_lowest_utilization_bins(s, requirements, alpha, rng),
+            lambda s: _ruin_random_bins(s, alpha, rng),
+        )
         for slot_idx, slot in enumerate(repacked_slots):
-            kept_bins = _ruin_slot_bins(slot, requirements, p, rng)
+            ruin_choice = rng.integers(0, len(ruin_ops))
+            kept_bins = ruin_ops[ruin_choice](slot)
             recreated_slot = _recreate_slot(
                 slot_idx,
                 kept_bins,
@@ -191,8 +228,7 @@ def ruin_recreate_schedule(
             ruined_slots, purchase_costs, running_costs
         )
 
-        accept_prob = p
-        if candidate_cost < best_cost or rng.random() <= accept_prob:
+        if candidate_cost < best_cost or rng.random() <= 0.50:
             current_slots = ruined_slots
             current_cost = candidate_cost
             current_machine_vector = candidate_machine_vector
@@ -207,7 +243,7 @@ def ruin_recreate_schedule(
             best_slots = [slot.copy() for slot in current_slots]
 
         print(
-            f"i:{iteration}\tx:\t{best_machine_vector}\tcost: {best_cost}\tp: {p:.4f}"
+            f"i:{iteration}\tx:\t{best_machine_vector}\tcost: {best_cost}\tcandidate cost: {candidate_cost}\tcandidate machine vector: {candidate_machine_vector}"
         )
 
     return ScheduleResult(
