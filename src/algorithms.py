@@ -6,7 +6,7 @@ from typing import List, Sequence, Tuple
 import numpy as np
 
 from problem_generation import ProblemInstance
-from packing import BinInfo as _BaseBinInfo, BinSelectionFn
+from packing import BinInfo as _BaseBinInfo, BinSelectionFn, first_fit_decreasing
 
 
 class BinInfo(_BaseBinInfo):
@@ -413,6 +413,82 @@ def build_time_slot_solution(
     _sort_bins_by_utilization(active_bins, requirements, running_costs)
     machine_counts = _machine_counts_from_bins(active_bins, num_types)
     return TimeSlotSolution(machine_counts=machine_counts, bins=active_bins)
+
+
+def ffd_schedule(
+    C: np.ndarray,
+    R: np.ndarray,
+    L: np.ndarray,
+    purchase_costs: np.ndarray,
+    running_costs: np.ndarray,
+) -> ScheduleResult:
+    """
+    Build a multi-slot schedule by running FFD independently per slot.
+
+    Parameters mirror the packing notation: ``C`` is the ``(K, M)`` capacity
+    matrix, ``R`` is the ``(K, J)`` requirement matrix, and ``L`` is either a
+    ``(T, J)`` matrix of per-slot job counts or a length-``J`` vector. Costs are
+    length-``M`` vectors for purchasing and running machine types.
+    """
+
+    C = np.asarray(C, dtype=float)
+    R = np.asarray(R, dtype=float)
+    L = np.asarray(L, dtype=int)
+    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
+
+    if C.ndim != 2 or R.ndim != 2:
+        raise ValueError("C and R must be 2D matrices.")
+    if C.shape[0] != R.shape[0]:
+        raise ValueError("C and R must describe the same resource dimensions.")
+
+    if L.ndim == 1:
+        L = L.reshape(1, -1)
+    elif L.ndim != 2:
+        raise ValueError("L must be a vector or a 2D matrix.")
+    if np.any(L < 0):
+        raise ValueError("Job counts in L must be non-negative.")
+
+    M = C.shape[1]
+    J = R.shape[1]
+    if L.shape[1] != J:
+        raise ValueError(f"L must contain {J} job-type columns; got {L.shape[1]}.")
+    if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
+        raise ValueError("Cost vectors must have one entry per machine type.")
+
+    purchased_bins = np.zeros(M, dtype=int)
+    time_slot_solutions: List[TimeSlotSolution] = []
+    total_cost = 0
+    machine_vector = np.zeros(M, dtype=int)
+
+    for slot_jobs in L:
+        if np.all(slot_jobs == 0):
+            slot_solution = TimeSlotSolution(
+                machine_counts=np.zeros(M, dtype=int), bins=[]
+            )
+        else:
+            # Reuse ``purchased_bins`` so purchase costs are paid only once across slots.
+            ffd_result = first_fit_decreasing(
+                C=C,
+                R=R,
+                purchase_costs=purchase_vec,
+                opening_costs=running_vec,
+                L=slot_jobs,
+                purchased_bins=purchased_bins,
+            )
+
+            total_cost += float(ffd_result.total_cost)
+            slot_solution = build_time_slot_solution(ffd_result.bins, M, R, running_vec)
+
+        time_slot_solutions.append(slot_solution)
+        machine_vector = np.maximum(machine_vector, slot_solution.machine_counts)
+
+    return ScheduleResult(
+        total_cost=total_cost,
+        machine_vector=machine_vector,
+        upper_bound=purchased_bins.copy(),
+        time_slot_solutions=time_slot_solutions,
+    )
 
 
 def _sort_bins_by_utilization(
