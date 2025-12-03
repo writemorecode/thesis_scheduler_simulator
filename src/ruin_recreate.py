@@ -49,7 +49,7 @@ def _ruin_lowest_utilization_bins(
     bins = _copy_bins(slot_solution.bins)
 
     # Shuffle first to randomize tie ordering among equally utilized bins.
-    rng.shuffle(bins)
+    rng.shuffle(np.array(bins))
     _sort_bins_by_utilization(bins, requirements)
 
     num_bins = len(bins)
