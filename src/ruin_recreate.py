@@ -292,23 +292,24 @@ def ruin_recreate_schedule(
     )
     for it in range(max_iterations):
         # 2. Global search phase
-        # x_shaken = _shake_schedule(
-        x_shaken = _shake_lowest_utilization_bins(
+        x_shaken = _shake_schedule(
+            # x_shaken = _shake_lowest_utilization_bins(
             schedule=x,
             job_matrix=L,
             capacities=C,
             requirements=R,
             purchase_costs=c_p,
             running_costs=c_r,
-            max_fraction=0.3,
+            max_fraction=0.6,
             rng=rng,
         )
         # 3. Local improvement phase
         x_repacked = repack_schedule(x_shaken, C, R, c_p, c_r)
 
         print(
-            f"Iteration {it + 1}:\tcost\t{x_repacked.total_cost}\t(best {x_best.total_cost})\tmachines {x_repacked.machine_vector}"
+            f"Iteration {it + 1}:\tcost\t{x_repacked.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_repacked.machine_vector}"
         )
+
         if x_repacked.total_cost < x_best.total_cost:
             print("Accepted inferior solution")
             x_best = x_repacked

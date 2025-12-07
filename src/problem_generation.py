@@ -27,8 +27,8 @@ def generate_random_instance(
     capacity_range: Tuple[int, int] = (5, 18),
     demand_fraction: Tuple[float, float] = (0.2, 0.8),
     job_count_range: Tuple[int, int] = (0, 6),
-    purchase_cost_range: Tuple[int, int] = (4, 15),
-    running_cost_range: Tuple[int, int] = (1, 10),
+    alpha: np.ndarray | None = None,
+    gamma: float = 0.05,
 ) -> ProblemInstance:
     """
     Generate a valid random problem instance for the scheduler.
@@ -37,7 +37,8 @@ def generate_random_instance(
     - capacities (C): (K, M) matrix of per-dimension machine capacities.
     - requirements (R): (K, J) matrix of per-dimension job demands.
     - job_counts (L): (T, J) non-negative integer matrix with job counts per slot.
-    - purchase_costs and running_costs: length-M vectors of positive costs.
+    - purchase_costs (c_p): length-M vector computed as C.T @ alpha, where alpha sums to 1.
+    - running_costs (c_r): length-M vector computed as gamma * purchase_costs.
 
     Parameters let you control value ranges; defaults keep instances small but diverse.
     """
@@ -59,14 +60,28 @@ def generate_random_instance(
     if low_jobs < 0 or high_jobs < low_jobs:
         raise ValueError("job_count_range must be non-negative with low <= high.")
 
-    pc_low, pc_high = purchase_cost_range
-    rc_low, rc_high = running_cost_range
-    if pc_low <= 0 or rc_low <= 0 or pc_high < pc_low or rc_high < rc_low:
-        raise ValueError("Cost ranges must be positive with low <= high.")
+    if gamma <= 0 or gamma >= 1:
+        raise ValueError("gamma must be a percentage in the range (0, 1).")
 
     rng = np.random.default_rng(seed)
 
     capacities = rng.integers(low_cap, high_cap + 1, size=(K, M), dtype=int)
+
+    # Dimension weights alpha reflect the relative scarcity/value per resource.
+    if alpha is None:
+        alpha_raw = rng.random(K)
+    else:
+        alpha_raw = np.asarray(alpha, dtype=float).reshape(-1)
+        if alpha_raw.shape[0] != K:
+            raise ValueError(f"alpha must have length {K}.")
+        if np.any(alpha_raw < 0):
+            raise ValueError("alpha entries must be non-negative.")
+
+    alpha_sum = float(np.sum(alpha_raw))
+    if alpha_sum <= 0:
+        raise ValueError("alpha must have a positive sum before normalization.")
+
+    alpha = alpha_raw / alpha_sum
 
     # Each job type is guaranteed to fit in at least one machine by sampling
     # demands as a fraction of a randomly chosen machine's capacity.
@@ -87,8 +102,8 @@ def generate_random_instance(
         job_idx = rng.integers(0, J)
         job_counts[slot_idx, job_idx] = 1
 
-    purchase_costs = rng.integers(pc_low, pc_high + 1, size=M, dtype=int)
-    running_costs = rng.integers(rc_low, rc_high + 1, size=M, dtype=int)
+    purchase_costs = capacities.T @ alpha
+    running_costs = gamma * purchase_costs
 
     return ProblemInstance(
         capacities=capacities.astype(float),
