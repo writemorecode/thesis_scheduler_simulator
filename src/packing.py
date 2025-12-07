@@ -100,6 +100,8 @@ def _sort_items_decreasing(
         raise ValueError(
             f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
         )
+    if np.any(L_array < 0):
+        raise ValueError("L entries must be non-negative.")
 
     _, J = R_array.shape
     if J == 0:
@@ -229,6 +231,10 @@ def first_fit(
     L = np.asarray(L, dtype=int).reshape(-1)
     if L.shape[0] != J:
         raise ValueError(f"L must have length {J}, got {L.shape[0]}.")
+    if np.any(L < 0):
+        raise ValueError("Job counts in L must be non-negative.")
+    if np.any(L < 0):
+        raise ValueError("Job counts in L must be non-negative.")
 
     opened_bins_vec = (
         np.zeros(M, dtype=int)

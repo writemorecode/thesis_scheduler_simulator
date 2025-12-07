@@ -66,6 +66,7 @@ class ScheduleResult:
     machine_vector: np.ndarray
     upper_bound: np.ndarray | None
     time_slot_solutions: List[TimeSlotSolution]
+    purchased_baseline: np.ndarray | None = None
 
     def validate(
         self,
@@ -126,6 +127,15 @@ class ScheduleResult:
                 raise ValueError(
                     f"running_costs must have one entry per machine type ({M})."
                 )
+        baseline_vec = None
+        if self.purchased_baseline is not None:
+            baseline_vec = np.asarray(self.purchased_baseline, dtype=int).reshape(-1)
+            if baseline_vec.shape[0] != M:
+                raise ValueError(
+                    f"purchased_baseline must have one entry per machine type ({M})."
+                )
+            if np.any(baseline_vec < 0):
+                raise ValueError("purchased_baseline must contain non-negative counts.")
 
         expected_machine_vector = np.zeros(M, dtype=int)
 
@@ -226,7 +236,11 @@ class ScheduleResult:
         #     raise ValueError("machine_vector exceeds the provided upper bound.")
 
         if purchase_vec is not None and running_vec is not None:
-            recomputed = float(np.dot(purchase_vec, machine_vector))
+            if baseline_vec is None:
+                baseline_vec = np.zeros(M, dtype=int)
+
+            incremental_purchases = np.maximum(machine_vector - baseline_vec, 0)
+            recomputed = float(np.dot(purchase_vec, incremental_purchases))
             running_total = float(
                 sum(
                     float(
@@ -472,6 +486,7 @@ def ffd_schedule(
         if np.any(purchased_bins < 0):
             raise ValueError("purchased_bins must contain non-negative counts.")
         purchased_bins = purchased_bins.copy()
+    initial_purchased = purchased_bins.copy()
 
     time_slot_solutions: List[TimeSlotSolution] = []
     machine_vector = np.zeros(M, dtype=int)
@@ -501,7 +516,9 @@ def ffd_schedule(
 
     # Recompute total cost to align with ScheduleResult.validate regardless of the
     # initial purchased bin counts passed in.
-    cost = float(np.dot(purchase_vec, machine_vector))
+    # Only charge purchases beyond the baseline provided in ``purchased_bins``.
+    incremental_purchases = np.maximum(purchased_bins - initial_purchased, 0)
+    cost = float(np.dot(purchase_vec, incremental_purchases))
     total_cost = cost + running_total
     print(f"Purchase cost: {cost}, Running cost: {running_total}")
 
@@ -510,6 +527,7 @@ def ffd_schedule(
         machine_vector=machine_vector,
         upper_bound=purchased_bins.copy(),
         time_slot_solutions=time_slot_solutions,
+        purchased_baseline=initial_purchased,
     )
 
 
