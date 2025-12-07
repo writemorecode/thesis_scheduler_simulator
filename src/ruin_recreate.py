@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from typing import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -17,6 +18,15 @@ from algorithms import (
 )
 from packing import best_fit_decreasing, first_fit_decreasing
 from problem_generation import ProblemInstance
+
+
+@dataclass
+class ShakeConfig:
+    ruin_fraction_range: tuple[float, float] = (0.1, 0.6)
+    penalized_type_count: int = 2
+    penalty_multiplier_range: tuple[float, float] = (3.0, 6.0)
+    clear_opened_probability: float = 0.1
+    use_best_fit_probability: float = 0.5
 
 
 def _copy_bins(bins: Sequence[BinInfo]) -> list[BinInfo]:
@@ -120,8 +130,8 @@ def _ruin_random_bins(
 
     num_bins = len(bins)
 
-    max_fraction = 0.50
-    ruin_count = min(num_bins, int(math.ceil(max_fraction * len(bins))))
+    sampled_fraction = float(rng.uniform(0.0, max_fraction))
+    ruin_count = min(num_bins, int(math.ceil(sampled_fraction * len(bins))))
 
     removed_indices = set(rng.choice(len(bins), size=ruin_count, replace=False))
     print(f"Removed bin indices: {removed_indices}")
@@ -168,6 +178,34 @@ def _recreate_slot(
     return time_slot_solution
 
 
+def _apply_type_penalties(
+    machine_vec: np.ndarray,
+    purchase_vec: np.ndarray,
+    running_vec: np.ndarray,
+    *,
+    num_penalized: int,
+    multiplier_range: tuple[float, float],
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Inflate costs for a random subset of used machine types to force diversification.
+    """
+
+    used = np.nonzero(machine_vec > 0)[0]
+    if used.size == 0 or num_penalized <= 0:
+        return purchase_vec, running_vec, np.array([], dtype=int)
+
+    num_penalized = min(num_penalized, used.size)
+    penalized_types = rng.choice(used, size=num_penalized, replace=False)
+    multiplier = float(rng.uniform(*multiplier_range))
+
+    updated_purchase = purchase_vec.copy()
+    updated_running = running_vec.copy()
+    updated_purchase[penalized_types] *= multiplier
+    updated_running[penalized_types] *= multiplier
+    return updated_purchase, updated_running, penalized_types
+
+
 def _shake_schedule(
     schedule: ScheduleResult,
     job_matrix: np.ndarray,
@@ -176,13 +214,14 @@ def _shake_schedule(
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
     *,
-    max_fraction: float,
     rng: np.random.Generator,
+    config: ShakeConfig | None = None,
 ) -> ScheduleResult:
     """
-    Remove a used bin type, penalize it, and rebuild the schedule.
+    Perturb the schedule by dropping random bins, penalizing types, and rebuilding.
     """
 
+    cfg = config or ShakeConfig()
     purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
     running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
     machine_vec = np.asarray(schedule.machine_vector, dtype=int).reshape(-1)
@@ -190,32 +229,54 @@ def _shake_schedule(
     if used_types.size == 0:
         return schedule
 
-    shaken_type = int(rng.choice(used_types))
-    # print(f"Shaking bin type: {shaken_type}")
-
-    penalty_cost = float(purchase_vec.sum() + running_vec.sum())
-    updated_purchase = purchase_vec.copy()
-    updated_running = running_vec.copy()
-    updated_purchase[shaken_type] = penalty_cost
-    updated_running[shaken_type] = penalty_cost
+    updated_purchase, updated_running, penalized = _apply_type_penalties(
+        machine_vec,
+        purchase_vec,
+        running_vec,
+        num_penalized=cfg.penalized_type_count,
+        multiplier_range=cfg.penalty_multiplier_range,
+        rng=rng,
+    )
+    if penalized.size:
+        print(f"Penalized bin types: {penalized}")
 
     shaken_slots: list[TimeSlotSolution] = []
     num_types = capacities.shape[1]
     for slot_idx, slot in enumerate(schedule.time_slot_solutions):
-        kept_bins = _copy_bins(
-            [bin_info for bin_info in slot.bins if bin_info.bin_type != shaken_type]
+        ruin_low, ruin_high = cfg.ruin_fraction_range
+        effective_high = max(0.0, min(1.0, ruin_high))
+        effective_low = max(0.0, min(effective_high, ruin_low))
+        sampled_fraction = float(rng.uniform(effective_low, effective_high))
+        kept_bins = _ruin_random_bins(
+            slot_solution=slot,
+            max_fraction=sampled_fraction,
+            rng=rng,
         )
-        opened_bins = _machine_counts_from_bins(kept_bins, num_types)
+        if rng.random() < cfg.clear_opened_probability:
+            opened_bins = np.zeros(num_types, dtype=int)
+        else:
+            opened_bins = _machine_counts_from_bins(kept_bins, num_types)
         job_counts = job_matrix[slot_idx].reshape(-1)
 
-        packing_result = first_fit_decreasing(
-            capacities,
-            requirements,
-            updated_purchase,
-            updated_running,
-            L=job_counts,
-            opened_bins=opened_bins,
-        )
+        use_bfd = rng.random() < cfg.use_best_fit_probability
+        if use_bfd:
+            packing_result = best_fit_decreasing(
+                capacities,
+                requirements,
+                updated_purchase,
+                updated_running,
+                L=job_counts,
+                opened_bins=opened_bins,
+            )
+        else:
+            packing_result = first_fit_decreasing(
+                capacities,
+                requirements,
+                updated_purchase,
+                updated_running,
+                L=job_counts,
+                opened_bins=opened_bins,
+            )
         recreated_slot = build_time_slot_solution(
             packing_result.bins,
             num_types,
@@ -246,8 +307,10 @@ def ruin_recreate_schedule(
     problem: ProblemInstance,
     max_iterations: int = 20,
     rng: np.random.Generator | None = None,
+    shake_config: ShakeConfig | None = None,
 ) -> ScheduleResult:
     rng = rng or np.random.default_rng()
+    shake_cfg = shake_config or ShakeConfig()
 
     C = np.asarray(problem.capacities, dtype=float)
     R = np.asarray(problem.requirements, dtype=float)
@@ -300,8 +363,8 @@ def ruin_recreate_schedule(
             requirements=R,
             purchase_costs=c_p,
             running_costs=c_r,
-            max_fraction=0.6,
             rng=rng,
+            config=shake_cfg,
         )
         # 3. Local improvement phase
         x_repacked = repack_schedule(x_shaken, C, R, c_p, c_r)
@@ -311,7 +374,7 @@ def ruin_recreate_schedule(
         )
 
         if x_repacked.total_cost < x_best.total_cost:
-            print("Accepted inferior solution")
+            print("Accepted improved solution")
             x_best = x_repacked
         x = x_repacked
 
