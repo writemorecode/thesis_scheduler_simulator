@@ -11,12 +11,11 @@ from algorithms import (
     TimeSlotSolution,
     build_time_slot_solution,
     _machine_counts_from_bins,
-    _solution_cost,
     _sort_bins_by_utilization,
-    pack_time_slot,
-    repack_jobs,
+    ffd_schedule,
+    repack_schedule,
 )
-from packing import best_fit_decreasing
+from packing import best_fit_decreasing, first_fit_decreasing
 from problem_generation import ProblemInstance
 
 
@@ -34,35 +33,76 @@ def _copy_bins(bins: Sequence[BinInfo]) -> list[BinInfo]:
     ]
 
 
-def _ruin_lowest_utilization_bins(
-    slot_solution: TimeSlotSolution,
+def _shake_lowest_utilization_bins(
+    schedule: ScheduleResult,
+    job_matrix: np.ndarray,
+    capacities: np.ndarray,
     requirements: np.ndarray,
+    purchase_costs: np.ndarray,
+    running_costs: np.ndarray,
+    *,
     max_fraction: float,
     rng: np.random.Generator,
-) -> list[BinInfo]:
+) -> ScheduleResult:
     """
-    Remove the lowest-utilization bins up to ``max_fraction`` of available bins.
-
-    Returns the list of bins to keep (post-ruin); removed bins are discarded.
+    Remove low-utilization bins and rebuild the schedule with BFD.
     """
 
-    bins = _copy_bins(slot_solution.bins)
+    job_matrix = np.asarray(job_matrix, dtype=int)
+    if job_matrix.ndim == 1:
+        job_matrix = job_matrix.reshape(1, -1)
+    num_types = capacities.shape[1]
 
-    # Shuffle first to randomize tie ordering among equally utilized bins.
-    rng.shuffle(np.array(bins))
-    _sort_bins_by_utilization(bins, requirements)
+    shaken_slots: list[TimeSlotSolution] = []
+    for slot_idx, slot in enumerate(schedule.time_slot_solutions):
+        bins = _copy_bins(slot.bins)
+        rng.shuffle(bins)
+        _sort_bins_by_utilization(bins, requirements, running_costs)
 
-    num_bins = len(bins)
-    if max_fraction <= 0.0 or num_bins == 0:
         ruin_count = 0
-    else:
-        max_removal = min(num_bins, int(math.ceil(max_fraction * num_bins)))
-        ruin_count = int(rng.integers(0, max_removal + 1))
+        if max_fraction > 0.0 and bins:
+            max_removal = min(len(bins), int(math.ceil(max_fraction * len(bins))))
+            ruin_count = int(rng.integers(0, max_removal + 1))
 
-    if ruin_count == 0:
-        return bins
+        kept_bins = bins[ruin_count:]
+        opened_bins = _machine_counts_from_bins(kept_bins, num_types)
+        job_counts = job_matrix[slot_idx].reshape(-1)
 
-    return bins[ruin_count:]
+        packing_result = best_fit_decreasing(
+            capacities,
+            requirements,
+            purchase_costs,
+            running_costs,
+            L=job_counts,
+            opened_bins=opened_bins,
+        )
+
+        recreated_slot = build_time_slot_solution(
+            packing_result.bins,
+            num_types,
+            requirements,
+            running_costs,
+        )
+        shaken_slots.append(recreated_slot)
+
+    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
+    machine_vector = np.zeros_like(purchase_vec, dtype=int)
+    total_cost = 0.0
+
+    for slot in shaken_slots:
+        counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
+        machine_vector = np.maximum(machine_vector, counts)
+        total_cost += float(np.dot(running_vec, counts))
+
+    total_cost += float(np.dot(purchase_vec, machine_vector))
+
+    return ScheduleResult(
+        total_cost=total_cost,
+        machine_vector=machine_vector,
+        upper_bound=schedule.upper_bound,
+        time_slot_solutions=shaken_slots,
+    )
 
 
 def _ruin_random_bins(
@@ -79,16 +119,13 @@ def _ruin_random_bins(
     bins = _copy_bins(slot_solution.bins)
 
     num_bins = len(bins)
-    if max_fraction <= 0.0 or num_bins == 0:
-        ruin_count = 0
-    else:
-        max_removal = min(num_bins, int(math.ceil(max_fraction * num_bins)))
-        ruin_count = int(rng.integers(0, max_removal + 1))
 
-    if ruin_count == 0:
-        return bins
+    max_fraction = 0.50
+    ruin_count = min(num_bins, int(math.ceil(max_fraction * len(bins))))
 
     removed_indices = set(rng.choice(len(bins), size=ruin_count, replace=False))
+    print(f"Removed bin indices: {removed_indices}")
+    print()
     return [bin_info for idx, bin_info in enumerate(bins) if idx not in removed_indices]
 
 
@@ -104,11 +141,17 @@ def _recreate_slot(
     """
     Re-pack a single time slot using BFD, seeding with kept bin counts.
     """
+    _, M = capacities.shape
 
     job_counts = job_matrix[slot_index].reshape(-1)
-    opened_bins = _machine_counts_from_bins(kept_bins, capacities.shape[1])
+    opened_bins = np.zeros(M, dtype=int)
+    for bin_info in kept_bins:
+        opened_bins[bin_info.bin_type] += 1
 
-    bfd_result = best_fit_decreasing(
+    bins_before = _machine_counts_from_bins(kept_bins, M)
+    print(f"Bins before recreate: {bins_before}")
+
+    packing_result = first_fit_decreasing(
         capacities,
         requirements,
         purchase_costs,
@@ -117,138 +160,158 @@ def _recreate_slot(
         opened_bins=opened_bins,
     )
 
-    return build_time_slot_solution(
-        bfd_result.bins, capacities.shape[1], requirements, running_costs
+    time_slot_solution = build_time_slot_solution(
+        packing_result.bins, capacities.shape[1], requirements, running_costs
+    )
+    bins_after_recreate = _machine_counts_from_bins(time_slot_solution.bins, M)
+    print(f"Bins after recreate: {bins_after_recreate}")
+    return time_slot_solution
+
+
+def _shake_schedule(
+    schedule: ScheduleResult,
+    job_matrix: np.ndarray,
+    capacities: np.ndarray,
+    requirements: np.ndarray,
+    purchase_costs: np.ndarray,
+    running_costs: np.ndarray,
+    *,
+    max_fraction: float,
+    rng: np.random.Generator,
+) -> ScheduleResult:
+    """
+    Remove a used bin type, penalize it, and rebuild the schedule.
+    """
+
+    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
+    machine_vec = np.asarray(schedule.machine_vector, dtype=int).reshape(-1)
+    used_types = np.nonzero(machine_vec > 0)[0]
+    if used_types.size == 0:
+        return schedule
+
+    shaken_type = int(rng.choice(used_types))
+    # print(f"Shaking bin type: {shaken_type}")
+
+    penalty_cost = float(purchase_vec.sum() + running_vec.sum())
+    updated_purchase = purchase_vec.copy()
+    updated_running = running_vec.copy()
+    updated_purchase[shaken_type] = penalty_cost
+    updated_running[shaken_type] = penalty_cost
+
+    shaken_slots: list[TimeSlotSolution] = []
+    num_types = capacities.shape[1]
+    for slot_idx, slot in enumerate(schedule.time_slot_solutions):
+        kept_bins = _copy_bins(
+            [bin_info for bin_info in slot.bins if bin_info.bin_type != shaken_type]
+        )
+        opened_bins = _machine_counts_from_bins(kept_bins, num_types)
+        job_counts = job_matrix[slot_idx].reshape(-1)
+
+        packing_result = first_fit_decreasing(
+            capacities,
+            requirements,
+            updated_purchase,
+            updated_running,
+            L=job_counts,
+            opened_bins=opened_bins,
+        )
+        recreated_slot = build_time_slot_solution(
+            packing_result.bins,
+            num_types,
+            requirements,
+            running_costs=updated_running,
+        )
+        shaken_slots.append(recreated_slot)
+
+    machine_vector = np.zeros_like(updated_purchase, dtype=int)
+    total_cost = 0.0
+
+    for slot in shaken_slots:
+        counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
+        machine_vector = np.maximum(machine_vector, counts)
+        total_cost += float(np.dot(updated_running, counts))
+
+    total_cost += float(np.dot(updated_purchase, machine_vector))
+
+    return ScheduleResult(
+        total_cost=total_cost,
+        machine_vector=machine_vector,
+        upper_bound=schedule.upper_bound,
+        time_slot_solutions=shaken_slots,
     )
 
 
 def ruin_recreate_schedule(
     problem: ProblemInstance,
-    num_iterations: int = 50,
-    alpha: float = 0.50,
-    *,
+    max_iterations: int = 20,
     rng: np.random.Generator | None = None,
 ) -> ScheduleResult:
-    """
-    Schedule jobs using a ruin-and-recreate metaheuristic.
-
-    The procedure starts from the marginal-cost machine vector, then iteratively
-    improves it by (a) re-packing each slot, (b) ruining bins using one of two
-    random operators (lowest utilization or random removal), and (c) recreating
-    slot packings with best-fit decreasing. Inferior
-    candidates are accepted with probability following a cosine decay from 1 to
-    0, allowing exploration early and converging later. ``alpha`` limits the
-    maximum fraction of bins the ruin step may remove.
-    """
-
     rng = rng or np.random.default_rng()
 
-    capacities = np.asarray(problem.capacities, dtype=float)
-    requirements = np.asarray(problem.requirements, dtype=float)
-    job_matrix = np.asarray(problem.job_counts, dtype=int)
-    purchase_costs = np.asarray(problem.purchase_costs, dtype=float).reshape(-1)
-    running_costs = np.asarray(problem.running_costs, dtype=float).reshape(-1)
+    C = np.asarray(problem.capacities, dtype=float)
+    R = np.asarray(problem.requirements, dtype=float)
+    L = np.asarray(problem.job_counts, dtype=int)
+    c_p = np.asarray(problem.purchase_costs, dtype=float).reshape(-1)
+    c_r = np.asarray(problem.running_costs, dtype=float).reshape(-1)
 
-    if capacities.ndim != 2 or requirements.ndim != 2:
+    if C.ndim != 2 or R.ndim != 2:
         raise ValueError("C and R must be 2D matrices.")
-    if capacities.shape[0] != requirements.shape[0]:
+    if C.shape[0] != R.shape[0]:
         raise ValueError("C and R must describe the same resource dimensions.")
 
-    if job_matrix.ndim == 1:
-        job_matrix = job_matrix.reshape(1, -1)
-    elif job_matrix.ndim != 2:
+    if L.ndim == 1:
+        L = L.reshape(1, -1)
+    elif L.ndim != 2:
         raise ValueError("L must be a vector or a 2D matrix.")
-    if np.any(job_matrix < 0):
+    if np.any(L < 0):
         raise ValueError("Job counts in L must be non-negative.")
 
-    _, M = capacities.shape
-    _, J = requirements.shape
-    if job_matrix.shape[1] != J:
-        raise ValueError(
-            f"L must contain {J} job-type columns; got {job_matrix.shape[1]}."
-        )
+    _, M = C.shape
+    _, J = R.shape
+    if L.shape[1] != J:
+        raise ValueError(f"L must contain {J} job-type columns; got {L.shape[1]}.")
 
-    if purchase_costs.shape[0] != M or running_costs.shape[0] != M:
+    if c_p.shape[0] != M or c_r.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
-    if not 0.0 <= alpha <= 1.0:
-        raise ValueError("alpha must be in [0, 1].")
-
-    purchased_counts = np.zeros(M, dtype=int)
-    initial_solution = [
-        pack_time_slot(
-            capacities=capacities,
-            requirements=requirements,
-            job_counts=time_slot,
-            purchase_costs=purchase_costs,
-            running_costs=running_costs,
-            purchased_counts=purchased_counts,
-        )
-        for time_slot in job_matrix
-    ]
-
-    print(f"Purchased machines: {purchased_counts}")
-
-    best_cost, best_machine_vector = _solution_cost(
-        initial_solution, purchase_costs, running_costs
+    # 1. Compute initial solution
+    x_0 = ffd_schedule(
+        C=C,
+        R=R,
+        L=L,
+        purchase_costs=c_p,
+        running_costs=c_r,
+        purchased_bins=None,
     )
-    print(f"x:\t{best_machine_vector}\tcost: {best_cost}")
-    best_slots = [slot.copy() for slot in initial_solution]
-    current_slots = [slot.copy() for slot in initial_solution]
+    x = x_0
+    x_best = x
 
-    for iteration in range(num_iterations):
-        repacked_slots = [
-            repack_jobs(slot, capacities, requirements, running_costs)
-            for slot in current_slots
-        ]
-        repacked_cost, repacked_machine_vector = _solution_cost(
-            repacked_slots, purchase_costs, running_costs
+    print(
+        f"Iteration {0}:\tbest cost {x_best.total_cost}\tmachines {x_best.machine_vector}"
+    )
+    for it in range(max_iterations):
+        # 2. Global search phase
+        # x_shaken = _shake_schedule(
+        x_shaken = _shake_lowest_utilization_bins(
+            schedule=x,
+            job_matrix=L,
+            capacities=C,
+            requirements=R,
+            purchase_costs=c_p,
+            running_costs=c_r,
+            max_fraction=0.3,
+            rng=rng,
         )
-
-        ruined_slots: list[TimeSlotSolution] = []
-        ruin_ops = (
-            lambda s: _ruin_lowest_utilization_bins(s, requirements, alpha, rng),
-            lambda s: _ruin_random_bins(s, alpha, rng),
-        )
-        for slot_idx, slot in enumerate(repacked_slots):
-            ruin_choice = rng.integers(0, len(ruin_ops))
-            kept_bins = ruin_ops[ruin_choice](slot)
-            recreated_slot = _recreate_slot(
-                slot_idx,
-                kept_bins,
-                job_matrix,
-                capacities,
-                requirements,
-                purchase_costs,
-                running_costs,
-            )
-            ruined_slots.append(recreated_slot)
-
-        candidate_cost, candidate_machine_vector = _solution_cost(
-            ruined_slots, purchase_costs, running_costs
-        )
-
-        if candidate_cost < best_cost or rng.random() <= 0.50:
-            current_slots = ruined_slots
-            current_cost = candidate_cost
-            current_machine_vector = candidate_machine_vector
-        else:
-            current_slots = repacked_slots
-            current_cost = repacked_cost
-            current_machine_vector = repacked_machine_vector
-
-        if current_cost < best_cost:
-            best_cost = current_cost
-            best_machine_vector = current_machine_vector
-            best_slots = [slot.copy() for slot in current_slots]
+        # 3. Local improvement phase
+        x_repacked = repack_schedule(x_shaken, C, R, c_p, c_r)
 
         print(
-            f"i:{iteration}\tx:\t{best_machine_vector}\tcost: {best_cost}\tcandidate cost: {candidate_cost}\tcandidate machine vector: {candidate_machine_vector}"
+            f"Iteration {it + 1}:\tcost\t{x_repacked.total_cost}\t(best {x_best.total_cost})\tmachines {x_repacked.machine_vector}"
         )
+        if x_repacked.total_cost < x_best.total_cost:
+            print("Accepted inferior solution")
+            x_best = x_repacked
+        x = x_repacked
 
-    return ScheduleResult(
-        total_cost=best_cost,
-        machine_vector=best_machine_vector,
-        upper_bound=None,
-        time_slot_solutions=best_slots,
-    )
+    return x_best

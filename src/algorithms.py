@@ -421,6 +421,7 @@ def ffd_schedule(
     L: np.ndarray,
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> ScheduleResult:
     """
     Build a multi-slot schedule by running FFD independently per slot.
@@ -429,6 +430,10 @@ def ffd_schedule(
     matrix, ``R`` is the ``(K, J)`` requirement matrix, and ``L`` is either a
     ``(T, J)`` matrix of per-slot job counts or a length-``J`` vector. Costs are
     length-``M`` vectors for purchasing and running machine types.
+
+    ``purchased_bins`` is an optional length-``M`` vector describing how many
+    machines of each type are already purchased. A copy is tracked internally
+    and updated as additional purchases are needed while scheduling.
     """
 
     C = np.asarray(C, dtype=float)
@@ -456,10 +461,21 @@ def ffd_schedule(
     if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
-    purchased_bins = np.zeros(M, dtype=int)
+    if purchased_bins is None:
+        purchased_bins = np.zeros(M, dtype=int)
+    else:
+        purchased_bins = np.asarray(purchased_bins, dtype=int).reshape(-1)
+        if purchased_bins.shape[0] != M:
+            raise ValueError(
+                f"purchased_bins must have one entry per machine type ({M})."
+            )
+        if np.any(purchased_bins < 0):
+            raise ValueError("purchased_bins must contain non-negative counts.")
+        purchased_bins = purchased_bins.copy()
+
     time_slot_solutions: List[TimeSlotSolution] = []
-    total_cost = 0
     machine_vector = np.zeros(M, dtype=int)
+    running_total = 0.0
 
     for slot_jobs in L:
         if np.all(slot_jobs == 0):
@@ -477,11 +493,17 @@ def ffd_schedule(
                 purchased_bins=purchased_bins,
             )
 
-            total_cost += float(ffd_result.total_cost)
             slot_solution = build_time_slot_solution(ffd_result.bins, M, R, running_vec)
 
         time_slot_solutions.append(slot_solution)
         machine_vector = np.maximum(machine_vector, slot_solution.machine_counts)
+        running_total += float(np.dot(running_vec, slot_solution.machine_counts))
+
+    # Recompute total cost to align with ScheduleResult.validate regardless of the
+    # initial purchased bin counts passed in.
+    cost = float(np.dot(purchase_vec, machine_vector))
+    total_cost = cost + running_total
+    print(f"Purchase cost: {cost}, Running cost: {running_total}")
 
     return ScheduleResult(
         total_cost=total_cost,
@@ -683,3 +705,42 @@ def repack_jobs(
 
     new_counts = _machine_counts_from_bins(bins, running_costs.shape[0])
     return TimeSlotSolution(machine_counts=new_counts, bins=bins)
+
+
+def repack_schedule(
+    schedule: ScheduleResult,
+    capacities: np.ndarray,
+    requirements: np.ndarray,
+    purchase_costs: np.ndarray,
+    running_costs: np.ndarray,
+) -> ScheduleResult:
+    """Repack all time slots with ``repack_jobs`` and recompute costs."""
+
+    repacked_slots: list[TimeSlotSolution] = []
+    for slot in schedule.time_slot_solutions:
+        repacked_slot = repack_jobs(
+            slot,
+            capacities=capacities,
+            requirements=requirements,
+            running_costs=running_costs,
+        )
+        repacked_slots.append(repacked_slot)
+
+    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
+    machine_vector = np.zeros_like(purchase_vec, dtype=int)
+    total_cost = 0.0
+
+    for slot in repacked_slots:
+        counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
+        machine_vector = np.maximum(machine_vector, counts)
+        total_cost += float(np.dot(running_vec, counts))
+
+    total_cost += float(np.dot(purchase_vec, machine_vector))
+
+    return ScheduleResult(
+        total_cost=total_cost,
+        machine_vector=machine_vector,
+        upper_bound=schedule.upper_bound,
+        time_slot_solutions=repacked_slots,
+    )
