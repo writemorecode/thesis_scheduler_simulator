@@ -17,7 +17,11 @@ def run_scheduler(
     scheduler=Callable[[ProblemInstance], ScheduleResult],
 ) -> None:
     start = time.time()
-    schedule: ScheduleResult = scheduler(problem)
+    try:
+        schedule: ScheduleResult = scheduler(problem)
+    except KeyboardInterrupt:
+        print("Stopping...")
+        return None
     end = time.time()
     delta = end - start
 
@@ -37,7 +41,7 @@ def main():
         seed = np.random.randint(1_000_000)
     print(f"SEED: {seed}")
 
-    K, J, M, T = 5, 10, 6, 100
+    K, J, M, T = 5, 10, 5, 50
     problem = generate_random_instance(K=K, J=J, M=M, T=T, seed=seed)
 
     print(f"Buy costs:\t{problem.purchase_costs}\nOpen costs:\t{problem.running_costs}")

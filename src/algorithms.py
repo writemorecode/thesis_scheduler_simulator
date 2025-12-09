@@ -506,6 +506,7 @@ def ffd_schedule(
                 opening_costs=running_vec,
                 L=slot_jobs,
                 purchased_bins=purchased_bins,
+                initial=True,
             )
 
             slot_solution = build_time_slot_solution(ffd_result.bins, M, R, running_vec)

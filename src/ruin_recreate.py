@@ -134,8 +134,8 @@ def _ruin_random_bins(
     ruin_count = min(num_bins, int(math.ceil(sampled_fraction * len(bins))))
 
     removed_indices = set(rng.choice(len(bins), size=ruin_count, replace=False))
-    print(f"Removed bin indices: {removed_indices}")
-    print()
+    # print(f"Removed bin indices: {removed_indices}")
+    # print()
     return [bin_info for idx, bin_info in enumerate(bins) if idx not in removed_indices]
 
 
@@ -158,8 +158,8 @@ def _recreate_slot(
     for bin_info in kept_bins:
         opened_bins[bin_info.bin_type] += 1
 
-    bins_before = _machine_counts_from_bins(kept_bins, M)
-    print(f"Bins before recreate: {bins_before}")
+    # bins_before = _machine_counts_from_bins(kept_bins, M)
+    # print(f"Bins before recreate: {bins_before}")
 
     packing_result = first_fit_decreasing(
         capacities,
@@ -173,8 +173,8 @@ def _recreate_slot(
     time_slot_solution = build_time_slot_solution(
         packing_result.bins, capacities.shape[1], requirements, running_costs
     )
-    bins_after_recreate = _machine_counts_from_bins(time_slot_solution.bins, M)
-    print(f"Bins after recreate: {bins_after_recreate}")
+    # bins_after_recreate = _machine_counts_from_bins(time_slot_solution.bins, M)
+    # print(f"Bins after recreate: {bins_after_recreate}")
     return time_slot_solution
 
 
@@ -237,8 +237,9 @@ def _shake_schedule(
         multiplier_range=cfg.penalty_multiplier_range,
         rng=rng,
     )
-    if penalized.size:
-        print(f"Penalized bin types: {penalized}")
+    # if penalized.size:
+    #    # print(f"Penalized bin types: {penalized}")
+    #    pass
 
     shaken_slots: list[TimeSlotSolution] = []
     num_types = capacities.shape[1]
@@ -355,8 +356,8 @@ def ruin_recreate_schedule(
     )
     for it in range(max_iterations):
         # 2. Global search phase
-        x_shaken = _shake_schedule(
-            # x_shaken = _shake_lowest_utilization_bins(
+        # x_shaken = _shake_schedule(
+        x_shaken = _shake_lowest_utilization_bins(
             schedule=x,
             job_matrix=L,
             capacities=C,
@@ -364,17 +365,21 @@ def ruin_recreate_schedule(
             purchase_costs=c_p,
             running_costs=c_r,
             rng=rng,
-            config=shake_cfg,
+            # config=shake_cfg,
+            max_fraction=0.70,
+        )
+        print(
+            f"(after shake) Iteration {it + 1}:\tcost\t{x_shaken.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_shaken.machine_vector}"
         )
         # 3. Local improvement phase
         x_repacked = repack_schedule(x_shaken, C, R, c_p, c_r)
 
         print(
-            f"Iteration {it + 1}:\tcost\t{x_repacked.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_repacked.machine_vector}"
+            f"(after repack) Iteration {it + 1}:\tcost\t{x_repacked.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_repacked.machine_vector}"
         )
 
         if x_repacked.total_cost < x_best.total_cost:
-            print("Accepted improved solution")
+            print("*** ACCEPTED IMPROVED SOLUTION ***")
             x_best = x_repacked
         x = x_repacked
 

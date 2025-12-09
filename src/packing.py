@@ -168,6 +168,27 @@ def _select_bin_type_marginal_cost(
     return best_type, best_requires_purchase
 
 
+def _select_bin_type_random(
+    item_type: int,
+    demand: np.ndarray,
+    capacities: np.ndarray,
+    purchased_counts: np.ndarray,
+    open_counts: np.ndarray,
+) -> tuple[int, bool]:
+    """Pick a random feasible bin type for ``demand``."""
+
+    fits_mask = np.all(capacities >= demand, axis=0)
+    if not np.any(fits_mask):
+        raise ValueError(
+            f"Item type {item_type} does not fit in any available bin type."
+        )
+
+    feasible_types = np.flatnonzero(fits_mask)
+    bin_type = int(np.random.default_rng().choice(feasible_types))
+    requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
+    return bin_type, requires_purchase
+
+
 def first_fit(
     C: np.ndarray,
     R: np.ndarray,
@@ -176,6 +197,7 @@ def first_fit(
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
     purchased_bins: np.ndarray | Sequence[int] | None = None,
+    initial: bool = False,
 ) -> BinPackingResult:
     """
     Run the first-fit heterogeneous multidimensional bin packing heuristic.
@@ -289,15 +311,24 @@ def first_fit(
             if placed:
                 continue
 
-            bin_type, requires_purchase = _select_bin_type_marginal_cost(
-                j,
-                demand,
-                C,
-                purchase_costs,
-                opening_costs,
-                purchased_counts,
-                open_counts,
-            )
+            if not initial:
+                bin_type, requires_purchase = _select_bin_type_marginal_cost(
+                    j,
+                    demand,
+                    C,
+                    purchase_costs,
+                    opening_costs,
+                    purchased_counts,
+                    open_counts,
+                )
+            else:
+                bin_type, requires_purchase = _select_bin_type_random(
+                    j,
+                    demand,
+                    C,
+                    purchased_counts,
+                    open_counts,
+                )
 
             incremental_cost = (
                 float(opening_costs[bin_type])
@@ -325,6 +356,7 @@ def first_fit_decreasing(
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
     purchased_bins: np.ndarray | Sequence[int] | None = None,
+    initial: bool = False,
 ) -> BinPackingResult:
     """
     Run first-fit after sorting job types in non-increasing order of resource demand.
@@ -349,6 +381,7 @@ def first_fit_decreasing(
         L_sorted,
         opened_bins=opened_bins,
         purchased_bins=purchased_bins,
+        initial=initial,
     )
 
     if J > 0:
