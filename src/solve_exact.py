@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import time
@@ -16,32 +17,23 @@ from algorithms import BinInfo, ScheduleResult, TimeSlotSolution
 from problem_generation import ProblemInstance
 
 
-def solve_exact(
-    problem: ProblemInstance, *, time_limit: int | None = None
-) -> ScheduleResult:
+@dataclass
+class ILPModelData:
+    model: pulp.LpProblem
+    x_vars: dict[tuple[int, int, int], pulp.LpVariable]
+    y_vars: dict[tuple[int, int, int, int], pulp.LpVariable]
+    z_vars: dict[tuple[int, int], pulp.LpVariable]
+    metadata: dict
+
+
+def build_exact_ilp(
+    problem: ProblemInstance,
+) -> "ILPModelData":
     """
-    Solve the scheduling/packing problem exactly via integer linear programming.
+    Build the ILP model for the scheduling/packing problem.
 
-    Variables
-    ---------
-    x[t,m,b] : binary
-        Machine ``b`` of type ``m`` is powered on in time slot ``t``.
-    z[m,b] : binary
-        Machine ``b`` of type ``m`` is purchased (available to any slot).
-    y[t,m,b,j] : integer
-        Number of jobs of type ``j`` scheduled on machine ``b`` of type ``m`` in slot ``t``.
-
-    Objective
-    ---------
-    Minimize purchase + running cost across the horizon.
-
-    Constraints
-    -----------
-    1. All jobs in every slot are assigned exactly once.
-    2. Per-machine capacity respected in every resource dimension.
-    3. Jobs can only be placed on machines where they fit and only when the machine
-       is powered on.
-    4. Powered-on machines in any slot must have been purchased.
+    Returns the pulp model plus the variable maps and metadata needed to
+    reconstruct a ScheduleResult after solving.
     """
 
     capacities = np.asarray(problem.capacities, dtype=float)
@@ -97,9 +89,9 @@ def solve_exact(
     model = pulp.LpProblem("exact_schedule", pulp.LpMinimize)
 
     # Decision variables
-    x_vars: Dict[Tuple[int, int, int], pulp.LpVariable] = {}
-    z_vars: Dict[Tuple[int, int], pulp.LpVariable] = {}
-    y_vars: Dict[Tuple[int, int, int, int], pulp.LpVariable] = {}
+    x_vars: dict[tuple[int, int, int], pulp.LpVariable] = {}
+    z_vars: dict[tuple[int, int], pulp.LpVariable] = {}
+    y_vars: dict[tuple[int, int, int, int], pulp.LpVariable] = {}
 
     for m, limit in enumerate(max_machines_per_type):
         for b in range(limit):
@@ -159,8 +151,48 @@ def solve_exact(
         # Link power-on to purchase.
         model += x_var <= z_vars[(m, b)]
 
+    metadata = dict(
+        capacities=capacities,
+        requirements=requirements,
+        job_counts=job_counts,
+        max_machines_per_type=max_machines_per_type,
+        upper_bound=upper_bound,
+    )
+
+    return ILPModelData(
+        model=model,
+        x_vars=x_vars,
+        y_vars=y_vars,
+        z_vars=z_vars,
+        metadata=metadata,
+    )
+
+
+def run_exact_solver(
+    model: pulp.LpProblem,
+    x_vars: dict[tuple[int, int, int], pulp.LpVariable],
+    y_vars: dict[tuple[int, int, int, int], pulp.LpVariable],
+    z_vars: dict[tuple[int, int], pulp.LpVariable],
+    metadata: dict,
+    *,
+    time_limit: int | None = None,
+) -> ScheduleResult:
+    """Solve the ILP model and build a ScheduleResult."""
+
+    capacities = metadata["capacities"]
+    requirements = metadata["requirements"]
+    job_counts = metadata["job_counts"]
+    max_machines_per_type = metadata["max_machines_per_type"]
+    upper_bound = metadata["upper_bound"]
+
+    K, M = capacities.shape
+    _, J = requirements.shape
+    T = job_counts.shape[0]
+
     options = ["maxSolutions 1"]
-    solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=None, threads=6, options=options)
+    solver = pulp.PULP_CBC_CMD(
+        msg=True, timeLimit=time_limit, threads=8, options=options
+    )
 
     print(time.time(), "starting solve...")
     try:
@@ -175,7 +207,6 @@ def solve_exact(
         # raise RuntimeError(f"ILP solver failed with status: {status_text}")
         pass
 
-    # Build ScheduleResult from the solved variables.
     machine_vector = np.zeros(M, dtype=int)
     for m in range(M):
         for b in range(max_machines_per_type[m]):
@@ -225,4 +256,56 @@ def solve_exact(
         machine_vector=machine_vector,
         upper_bound=upper_bound,
         time_slot_solutions=time_slot_solutions,
+    )
+
+
+def write_ilp_problem(model: pulp.LpProblem, path: str | Path) -> None:
+    """Persist the ILP to disk in MPS or LP format."""
+
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".mps":
+        model.writeMPS(str(path))
+    elif suffix == ".lp":
+        model.writeLP(str(path))
+    else:
+        raise ValueError("File extension must be .mps or .lp.")
+
+
+def solve_exact(
+    problem: ProblemInstance, *, time_limit: int | None = None
+) -> ScheduleResult:
+    """
+    Solve the scheduling/packing problem exactly via integer linear programming.
+
+    Variables
+    ---------
+    x[t,m,b] : binary
+        Machine ``b`` of type ``m`` is powered on in time slot ``t``.
+    z[m,b] : binary
+        Machine ``b`` of type ``m`` is purchased (available to any slot).
+    y[t,m,b,j] : integer
+        Number of jobs of type ``j`` scheduled on machine ``b`` of type ``m`` in slot ``t``.
+
+    Objective
+    ---------
+    Minimize purchase + running cost across the horizon.
+
+    Constraints
+    -----------
+    1. All jobs in every slot are assigned exactly once.
+    2. Per-machine capacity respected in every resource dimension.
+    3. Jobs can only be placed on machines where they fit and only when the machine
+       is powered on.
+    4. Powered-on machines in any slot must have been purchased.
+    """
+
+    ilp_data = build_exact_ilp(problem)
+    return run_exact_solver(
+        ilp_data.model,
+        ilp_data.x_vars,
+        ilp_data.y_vars,
+        ilp_data.z_vars,
+        ilp_data.metadata,
+        time_limit=time_limit,
     )
