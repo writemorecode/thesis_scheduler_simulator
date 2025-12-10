@@ -1,6 +1,7 @@
 from __future__ import annotations
+import sys
 
-import csv
+import numpy as np
 import shutil
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -29,51 +30,31 @@ def _apply_latex_style() -> None:
         )
 
 
-def _load_results(path: Path) -> Dict[str, List[Tuple[int, float]]]:
+def _load_results(path: Path) -> tuple[np.ndarray, np.ndarray]:
     """Read algorithm-step-cost rows keyed by algorithm name."""
-    series: Dict[str, List[Tuple[int, float]]] = {}
-    with path.open(newline="") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            algo = str(row["algorithm"])
-            step = int(row["step"])
-            cost = float(row["cost"])
-            series.setdefault(algo, []).append((step, cost))
-
-    # Ensure points are plotted in step order.
-    for algo, points in series.items():
-        points.sort(key=lambda entry: entry[0])
-    return series
+    X, y = np.loadtxt(path, delimiter=",", unpack=True, skiprows=1)
+    return X, y
 
 
 def plot_results(
     csv_path: str | Path, output_path: str | Path = "results_plot.png"
 ) -> Path:
     csv_file = Path(csv_path)
-    results = _load_results(csv_file)
-    print(results)
+    X, y = _load_results(csv_file)
 
     _apply_latex_style()
 
-    colors = plt.get_cmap("tab10").colors
     fig, ax = plt.subplots(figsize=(6.4, 4.0))
 
-    for idx, (algo, points) in enumerate(
-        sorted(results.items(), key=lambda item: item[0])
-    ):
-        steps, costs = zip(*points)
-        color = colors[idx % len(colors)]
-        ax.plot(
-            steps,
-            costs,
-            label=f"Algorithm {algo}",
-            color=color,
-            linewidth=2.2,
-            marker="o",
-            markersize=6,
-        )
+    ax.plot(
+        X,
+        y,
+        linewidth=2.2,
+        marker="o",
+        markersize=6,
+    )
 
-    ax.set_title("Cost by Scheduler and Iteration")
+    ax.set_title("Cost")
     ax.set_xlabel("Iteration step")
     ax.set_ylabel("Cost")
     ax.grid(True, linestyle="--", linewidth=0.6, alpha=0.7)
@@ -87,5 +68,6 @@ def plot_results(
 
 
 if __name__ == "__main__":
-    output = plot_results(Path("results.csv"))
+    filename = sys.argv[1]
+    output = plot_results(Path(filename))
     print(f"Wrote plot to {output}")
