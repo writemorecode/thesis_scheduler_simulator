@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import math
-from typing import Sequence
 from dataclasses import dataclass
+import math
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -17,7 +17,6 @@ from algorithms import (
     repack_schedule,
 )
 from packing import (
-    best_fit_decreasing,
     first_fit_decreasing_largest,
 )
 from problem_generation import ProblemInstance
@@ -25,11 +24,16 @@ from problem_generation import ProblemInstance
 
 @dataclass
 class ShakeConfig:
-    ruin_fraction_range: tuple[float, float] = (0.1, 0.6)
+    # Max fraction of bins to remove during shaking
+    ruined_bins_fraction: float = 0.70
+    # Number of machine types to penalize
     penalized_type_count: int = 2
-    penalty_multiplier_range: tuple[float, float] = (3.0, 6.0)
+    # Multiplier range for penalizing machine types
+    penalty_multiplier_range: tuple[float, float] = (1.2, 2.0)
+    # Range for fraction of bins to ruin
+    ruin_fraction_range: tuple[float, float] = (0.3, 0.7)
+    # Probability of clearing all opened bins before recreate
     clear_opened_probability: float = 0.1
-    use_best_fit_probability: float = 0.5
 
 
 def _copy_bins(bins: Sequence[BinInfo]) -> list[BinInfo]:
@@ -46,7 +50,7 @@ def _copy_bins(bins: Sequence[BinInfo]) -> list[BinInfo]:
     ]
 
 
-def _shake_lowest_utilization_bins(
+def _shake_remove_lowest_utilization_bins(
     schedule: ScheduleResult,
     job_matrix: np.ndarray,
     capacities: np.ndarray,
@@ -54,12 +58,14 @@ def _shake_lowest_utilization_bins(
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
     *,
-    max_fraction: float,
+    shake_config: ShakeConfig | None = None,
     rng: np.random.Generator,
 ) -> ScheduleResult:
     """
-    Remove low-utilization bins and rebuild the schedule with BFD.
+    Remove low-utilization bins and rebuild the schedule with FFDL.
     """
+
+    shake_config = shake_config or ShakeConfig()
 
     job_matrix = np.asarray(job_matrix, dtype=int)
     if job_matrix.ndim == 1:
@@ -73,8 +79,10 @@ def _shake_lowest_utilization_bins(
         _sort_bins_by_utilization(bins, requirements, running_costs)
 
         ruin_count = 0
-        if max_fraction > 0.0 and bins:
-            max_removal = min(len(bins), int(math.ceil(max_fraction * len(bins))))
+        if shake_config.ruined_bins_fraction > 0.0 and bins:
+            max_removal = min(
+                len(bins), int(math.ceil(shake_config.ruined_bins_fraction * len(bins)))
+            )
             ruin_count = int(rng.integers(0, max_removal + 1))
 
         kept_bins = bins[ruin_count:]
@@ -209,7 +217,7 @@ def _apply_type_penalties(
     return updated_purchase, updated_running, penalized_types
 
 
-def _shake_schedule(
+def _shake_remove_random_bins(
     schedule: ScheduleResult,
     job_matrix: np.ndarray,
     capacities: np.ndarray,
@@ -240,9 +248,6 @@ def _shake_schedule(
         multiplier_range=cfg.penalty_multiplier_range,
         rng=rng,
     )
-    # if penalized.size:
-    #    # print(f"Penalized bin types: {penalized}")
-    #    pass
 
     shaken_slots: list[TimeSlotSolution] = []
     num_types = capacities.shape[1]
@@ -300,10 +305,8 @@ def ruin_recreate_schedule(
     problem: ProblemInstance,
     max_iterations: int = 20,
     rng: np.random.Generator | None = None,
-    shake_config: ShakeConfig | None = None,
 ) -> ScheduleResult:
     rng = rng or np.random.default_rng()
-    shake_cfg = shake_config or ShakeConfig()
 
     C = np.asarray(problem.capacities, dtype=float)
     R = np.asarray(problem.requirements, dtype=float)
@@ -341,41 +344,65 @@ def ruin_recreate_schedule(
         purchased_bins=None,
     )
     x = x_0
-    x_best = x
+    x_best = x_0
+    iterations_since_improvement = 0
 
     print(
-        f"Iteration {0}:\tbest cost {x_best.total_cost}\tmachines {x_best.machine_vector}"
+        f"Iteration {0}:\tCost:\t{x_best.total_cost:.4f}\tMachines:\t{x_best.machine_vector}"
     )
-    for it in range(max_iterations):
+    it = 0
+    # for it in range(max_iterations):
+    while iterations_since_improvement < max_iterations:
+        it += 1
+        iterations_since_improvement += 1
+
         # 2. Global search phase
-        x_shaken = _shake_lowest_utilization_bins(
-            schedule=x,
-            job_matrix=L,
-            capacities=C,
-            requirements=R,
-            purchase_costs=c_p,
-            running_costs=c_r,
-            rng=rng,
-            # config=shake_cfg,
-            max_fraction=0.70,
-        )
+        if np.random.rand() < 1 - 0.70:
+            print("Applying shake_schedule")
+            x_shaken = _shake_remove_random_bins(
+                schedule=x,
+                job_matrix=L,
+                capacities=C,
+                requirements=R,
+                purchase_costs=c_p,
+                running_costs=c_r,
+                rng=rng,
+            )
+        else:
+            x_shaken = _shake_remove_lowest_utilization_bins(
+                schedule=x,
+                job_matrix=L,
+                capacities=C,
+                requirements=R,
+                purchase_costs=c_p,
+                running_costs=c_r,
+                rng=rng,
+            )
+        #   print(
+        #       f"(X) Iteration {it + 1}:\tCost:\t{x_shaken.total_cost:.4f}\tBest cost:\t{x_best.total_cost:.4f}\tMachines:\t{x_shaken.machine_vector}"
+        #   )
 
         if x_shaken.total_cost < x_best.total_cost:
-            print(
-                f"(S) Iteration {it + 1}:\tcost\t{x_shaken.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_shaken.machine_vector}"
-            )
-            pass
+            # print(
+            #     f"(S) Iteration {it + 1}:\tCost: {x_shaken.total_cost:.4f}\tBest cost: {x_best.total_cost:.4f}\tMachines: {x_shaken.machine_vector}"
+            # )
+            iterations_since_improvement = 0
 
         # 3. Local improvement phase
         x_repacked = repack_schedule(x_shaken, C, R, c_p, c_r)
 
+        # print(
+        #     f"(R) Iteration {it + 1}:\tCost:\t{x_repacked.total_cost:.4f}\tBest cost:\t{x_best.total_cost:.4f}\tMachines:\t{x_best.machine_vector}"
+        # )
+
         if x_repacked.total_cost < x_best.total_cost:
-            # print("*** ACCEPTED IMPROVED SOLUTION ***")
-            print(
-                f"(R) Iteration {it + 1}:\tcost\t{x_repacked.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_repacked.machine_vector}"
-            )
             x_best = x_repacked
+            iterations_since_improvement = 0
 
         x = x_repacked
+
+        print(
+            f"Iteration {it + 1}:\tCost: {x.total_cost:.4f}\tBest cost: {x_best.total_cost:.4f}\tMachines: {x.machine_vector}\tBest machines: {x_best.machine_vector}"
+        )
 
     return x_best

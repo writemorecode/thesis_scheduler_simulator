@@ -23,7 +23,7 @@ def generate_random_instance(
     M: int,
     T: int,
     *,
-    seed: int | None = None,
+    rng: np.random.Generator,
     capacity_range: Tuple[int, int] = (5, 18),
     demand_fraction: Tuple[float, float] = (0.2, 0.8),
     job_count_range: Tuple[int, int] = (0, 6),
@@ -62,8 +62,6 @@ def generate_random_instance(
 
     if gamma <= 0 or gamma >= 1:
         raise ValueError("gamma must be a percentage in the range (0, 1).")
-
-    rng = np.random.default_rng(seed)
 
     capacities = rng.integers(low_cap, high_cap + 1, size=(K, M), dtype=int)
 

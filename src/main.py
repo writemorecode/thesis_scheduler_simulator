@@ -48,13 +48,17 @@ def main():
     iterations = args.iterations
     print(f"SEED: {seed}")
 
+    rng = np.random.default_rng(seed)
+
     K, J, M, T = 5, 20, 5, 100
-    problem = generate_random_instance(K=K, J=J, M=M, T=T, seed=seed)
+    problem = generate_random_instance(K=K, J=J, M=M, T=T, rng=rng)
 
     print(f"Buy costs:\t{problem.purchase_costs}\nOpen costs:\t{problem.running_costs}")
     print()
 
-    run_scheduler(problem, lambda prob: ruin_recreate_schedule(prob, iterations))
+    run_scheduler(
+        problem, lambda prob: ruin_recreate_schedule(prob, iterations, rng=rng)
+    )
 
 
 if __name__ == "__main__":
