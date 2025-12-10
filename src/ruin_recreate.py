@@ -16,7 +16,10 @@ from algorithms import (
     ffd_schedule,
     repack_schedule,
 )
-from packing import best_fit_decreasing, first_fit_decreasing
+from packing import (
+    best_fit_decreasing,
+    first_fit_decreasing_largest,
+)
 from problem_generation import ProblemInstance
 
 
@@ -66,7 +69,7 @@ def _shake_lowest_utilization_bins(
     shaken_slots: list[TimeSlotSolution] = []
     for slot_idx, slot in enumerate(schedule.time_slot_solutions):
         bins = _copy_bins(slot.bins)
-        rng.shuffle(bins)
+        rng.shuffle(np.array(bins))
         _sort_bins_by_utilization(bins, requirements, running_costs)
 
         ruin_count = 0
@@ -78,7 +81,7 @@ def _shake_lowest_utilization_bins(
         opened_bins = _machine_counts_from_bins(kept_bins, num_types)
         job_counts = job_matrix[slot_idx].reshape(-1)
 
-        packing_result = best_fit_decreasing(
+        packing_result = first_fit_decreasing_largest(
             capacities,
             requirements,
             purchase_costs,
@@ -161,7 +164,7 @@ def _recreate_slot(
     # bins_before = _machine_counts_from_bins(kept_bins, M)
     # print(f"Bins before recreate: {bins_before}")
 
-    packing_result = first_fit_decreasing(
+    packing_result = first_fit_decreasing_largest(
         capacities,
         requirements,
         purchase_costs,
@@ -259,25 +262,14 @@ def _shake_schedule(
             opened_bins = _machine_counts_from_bins(kept_bins, num_types)
         job_counts = job_matrix[slot_idx].reshape(-1)
 
-        use_bfd = rng.random() < cfg.use_best_fit_probability
-        if use_bfd:
-            packing_result = best_fit_decreasing(
-                capacities,
-                requirements,
-                updated_purchase,
-                updated_running,
-                L=job_counts,
-                opened_bins=opened_bins,
-            )
-        else:
-            packing_result = first_fit_decreasing(
-                capacities,
-                requirements,
-                updated_purchase,
-                updated_running,
-                L=job_counts,
-                opened_bins=opened_bins,
-            )
+        packing_result = first_fit_decreasing_largest(
+            capacities,
+            requirements,
+            updated_purchase,
+            updated_running,
+            L=job_counts,
+            opened_bins=opened_bins,
+        )
         recreated_slot = build_time_slot_solution(
             packing_result.bins,
             num_types,
@@ -356,7 +348,6 @@ def ruin_recreate_schedule(
     )
     for it in range(max_iterations):
         # 2. Global search phase
-        # x_shaken = _shake_schedule(
         x_shaken = _shake_lowest_utilization_bins(
             schedule=x,
             job_matrix=L,
@@ -368,19 +359,23 @@ def ruin_recreate_schedule(
             # config=shake_cfg,
             max_fraction=0.70,
         )
-        print(
-            f"(after shake) Iteration {it + 1}:\tcost\t{x_shaken.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_shaken.machine_vector}"
-        )
+
+        if x_shaken.total_cost < x_best.total_cost:
+            print(
+                f"(S) Iteration {it + 1}:\tcost\t{x_shaken.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_shaken.machine_vector}"
+            )
+            pass
+
         # 3. Local improvement phase
         x_repacked = repack_schedule(x_shaken, C, R, c_p, c_r)
 
-        print(
-            f"(after repack) Iteration {it + 1}:\tcost\t{x_repacked.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_repacked.machine_vector}"
-        )
-
         if x_repacked.total_cost < x_best.total_cost:
-            print("*** ACCEPTED IMPROVED SOLUTION ***")
+            # print("*** ACCEPTED IMPROVED SOLUTION ***")
+            print(
+                f"(R) Iteration {it + 1}:\tcost\t{x_repacked.total_cost:.4f}\t(best {x_best.total_cost:.4f})\tmachines {x_repacked.machine_vector}"
+            )
             x_best = x_repacked
+
         x = x_repacked
 
     return x_best
