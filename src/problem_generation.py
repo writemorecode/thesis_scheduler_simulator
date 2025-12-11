@@ -24,9 +24,9 @@ def generate_random_instance(
     T: int,
     *,
     rng: np.random.Generator,
-    capacity_range: Tuple[int, int] = (5, 18),
-    demand_fraction: Tuple[float, float] = (0.2, 0.8),
-    job_count_range: Tuple[int, int] = (0, 6),
+    capacity_range: Tuple[int, int] = (5, 20),
+    demand_fraction: Tuple[float, float] = (0.1, 0.95),
+    job_count_range: Tuple[int, int] = (0, 10),
     alpha: np.ndarray | None = None,
     gamma: float = 0.05,
 ) -> ProblemInstance:
