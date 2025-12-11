@@ -35,6 +35,96 @@ def _copy_bins(bins: Sequence[BinInfo]) -> list[BinInfo]:
     ]
 
 
+def _aggregate_schedule(
+    slots: Sequence[TimeSlotSolution],
+    purchase_costs: np.ndarray,
+    running_costs: np.ndarray,
+    upper_bound: float,
+) -> ScheduleResult:
+    """Compute machine vector and total cost from rebuilt slots."""
+
+    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
+
+    machine_vector = np.zeros_like(purchase_vec, dtype=int)
+    total_cost = 0.0
+
+    for slot in slots:
+        counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
+        machine_vector = np.maximum(machine_vector, counts)
+        total_cost += float(np.dot(running_vec, counts))
+
+    total_cost += float(np.dot(purchase_vec, machine_vector))
+
+    return ScheduleResult(
+        total_cost=total_cost,
+        machine_vector=machine_vector,
+        upper_bound=upper_bound,
+        time_slot_solutions=list(slots),
+    )
+
+
+def _recreate_with_opened_bins(
+    schedule: ScheduleResult,
+    job_matrix: np.ndarray,
+    capacities: np.ndarray,
+    requirements: np.ndarray,
+    purchase_costs: np.ndarray,
+    running_costs: np.ndarray,
+    *,
+    opened_bins_fn,
+    purchase_costs_override: np.ndarray | None = None,
+    running_costs_override: np.ndarray | None = None,
+) -> ScheduleResult:
+    """
+    Recreate all slots using a strategy that supplies opened bin counts per slot.
+    """
+
+    job_matrix = np.asarray(job_matrix, dtype=int)
+    if job_matrix.ndim == 1:
+        job_matrix = job_matrix.reshape(1, -1)
+
+    num_types = capacities.shape[1]
+    if num_types == 0:
+        return schedule
+
+    purchase_vec = np.asarray(
+        purchase_costs if purchase_costs_override is None else purchase_costs_override,
+        dtype=float,
+    ).reshape(-1)
+    running_vec = np.asarray(
+        running_costs if running_costs_override is None else running_costs_override,
+        dtype=float,
+    ).reshape(-1)
+
+    shaken_slots: list[TimeSlotSolution] = []
+    for slot_idx, slot in enumerate(schedule.time_slot_solutions):
+        opened_bins = opened_bins_fn(slot_idx, slot, num_types)
+        job_counts = job_matrix[slot_idx].reshape(-1)
+        packing_result = first_fit_decreasing_largest(
+            capacities,
+            requirements,
+            purchase_vec,
+            running_vec,
+            L=job_counts,
+            opened_bins=opened_bins,
+        )
+        recreated_slot = build_time_slot_solution(
+            packing_result.bins,
+            num_types,
+            requirements,
+            running_costs=running_vec,
+        )
+        shaken_slots.append(recreated_slot)
+
+    return _aggregate_schedule(
+        shaken_slots,
+        purchase_vec,
+        running_vec,
+        upper_bound=schedule.upper_bound,
+    )
+
+
 def _shake_remove_lowest_utilization_bins(
     schedule: ScheduleResult,
     job_matrix: np.ndarray,
@@ -49,15 +139,11 @@ def _shake_remove_lowest_utilization_bins(
     Remove low-utilization bins and rebuild the schedule with FFDL.
     """
 
-    job_matrix = np.asarray(job_matrix, dtype=int)
-    if job_matrix.ndim == 1:
-        job_matrix = job_matrix.reshape(1, -1)
-    num_types = capacities.shape[1]
-
-    shaken_slots: list[TimeSlotSolution] = []
-    for slot_idx, slot in enumerate(schedule.time_slot_solutions):
+    def opened_bins_fn(
+        slot_idx: int, slot: TimeSlotSolution, num_types: int
+    ) -> np.ndarray:
         bins = _copy_bins(slot.bins)
-        rng.shuffle(np.array(bins))
+        rng.shuffle(bins)
         _sort_bins_by_utilization(bins, requirements, running_costs)
 
         ruin_count = 0
@@ -66,43 +152,16 @@ def _shake_remove_lowest_utilization_bins(
             ruin_count = int(rng.integers(0, max_removal + 1))
 
         kept_bins = bins[ruin_count:]
-        opened_bins = _machine_counts_from_bins(kept_bins, num_types)
-        job_counts = job_matrix[slot_idx].reshape(-1)
+        return _machine_counts_from_bins(kept_bins, num_types)
 
-        packing_result = first_fit_decreasing_largest(
-            capacities,
-            requirements,
-            purchase_costs,
-            running_costs,
-            L=job_counts,
-            opened_bins=opened_bins,
-        )
-
-        recreated_slot = build_time_slot_solution(
-            packing_result.bins,
-            num_types,
-            requirements,
-            running_costs,
-        )
-        shaken_slots.append(recreated_slot)
-
-    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
-    machine_vector = np.zeros_like(purchase_vec, dtype=int)
-    total_cost = 0.0
-
-    for slot in shaken_slots:
-        counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
-        machine_vector = np.maximum(machine_vector, counts)
-        total_cost += float(np.dot(running_vec, counts))
-
-    total_cost += float(np.dot(purchase_vec, machine_vector))
-
-    return ScheduleResult(
-        total_cost=total_cost,
-        machine_vector=machine_vector,
-        upper_bound=schedule.upper_bound,
-        time_slot_solutions=shaken_slots,
+    return _recreate_with_opened_bins(
+        schedule,
+        job_matrix,
+        capacities,
+        requirements,
+        purchase_costs,
+        running_costs,
+        opened_bins_fn=opened_bins_fn,
     )
 
 
@@ -119,9 +178,6 @@ def _shake_uniform_bin_counts(
     Flatten bin counts to a uniform level before recreating with FFD.
     """
 
-    job_matrix = np.asarray(job_matrix, dtype=int)
-    if job_matrix.ndim == 1:
-        job_matrix = job_matrix.reshape(1, -1)
     num_types = capacities.shape[1]
     if num_types == 0:
         return schedule
@@ -129,41 +185,21 @@ def _shake_uniform_bin_counts(
     machine_vec = np.asarray(schedule.machine_vector, dtype=int).reshape(-1)
     total_bins = int(np.sum(machine_vec))
     uniform_count = int(math.ceil(total_bins / num_types))
-    opened_bins = np.full(num_types, uniform_count, dtype=int)
+    uniform_bins = np.full(num_types, uniform_count, dtype=int)
 
-    shaken_slots: list[TimeSlotSolution] = []
-    for slot_idx, _slot in enumerate(schedule.time_slot_solutions):
-        job_counts = job_matrix[slot_idx].reshape(-1)
-        packing_result = first_fit_decreasing_largest(
-            capacities,
-            requirements,
-            purchase_costs,
-            running_costs,
-            L=job_counts,
-            opened_bins=opened_bins.copy(),
-        )
-        recreated_slot = build_time_slot_solution(
-            packing_result.bins, num_types, requirements, running_costs
-        )
-        shaken_slots.append(recreated_slot)
+    def opened_bins_fn(
+        _slot_idx: int, _slot: TimeSlotSolution, _num_types: int
+    ) -> np.ndarray:
+        return uniform_bins.copy()
 
-    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
-    machine_vector = np.zeros_like(purchase_vec, dtype=int)
-    total_cost = 0.0
-
-    for slot in shaken_slots:
-        counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
-        machine_vector = np.maximum(machine_vector, counts)
-        total_cost += float(np.dot(running_vec, counts))
-
-    total_cost += float(np.dot(purchase_vec, machine_vector))
-
-    return ScheduleResult(
-        total_cost=total_cost,
-        machine_vector=machine_vector,
-        upper_bound=schedule.upper_bound,
-        time_slot_solutions=shaken_slots,
+    return _recreate_with_opened_bins(
+        schedule,
+        job_matrix,
+        capacities,
+        requirements,
+        purchase_costs,
+        running_costs,
+        opened_bins_fn=opened_bins_fn,
     )
 
 
@@ -204,55 +240,31 @@ def _shake_remove_random_bins(
     Perturb the schedule by dropping random bins, penalizing types, and rebuilding.
     """
 
-    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
     machine_vec = np.asarray(schedule.machine_vector, dtype=int).reshape(-1)
     used_types = np.nonzero(machine_vec > 0)[0]
     if used_types.size == 0:
         return schedule
 
-    shaken_slots: list[TimeSlotSolution] = []
     num_types = capacities.shape[1]
-    for slot_idx, slot in enumerate(schedule.time_slot_solutions):
+
+    def opened_bins_fn(
+        slot_idx: int, slot: TimeSlotSolution, _num_types: int
+    ) -> np.ndarray:
         kept_bins = _ruin_random_bins(
             slot_solution=slot,
             max_fraction=MAX_FRACTION,
             rng=rng,
         )
-        opened_bins = _machine_counts_from_bins(kept_bins, num_types)
-        job_counts = job_matrix[slot_idx].reshape(-1)
+        return _machine_counts_from_bins(kept_bins, num_types)
 
-        packing_result = first_fit_decreasing_largest(
-            capacities,
-            requirements,
-            purchase_vec,
-            running_vec,
-            L=job_counts,
-            opened_bins=opened_bins,
-        )
-        recreated_slot = build_time_slot_solution(
-            packing_result.bins,
-            num_types,
-            requirements,
-            running_costs=running_costs,
-        )
-        shaken_slots.append(recreated_slot)
-
-    machine_vector = np.zeros_like(purchase_vec, dtype=int)
-    total_cost = 0.0
-
-    for slot in shaken_slots:
-        counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
-        machine_vector = np.maximum(machine_vector, counts)
-        total_cost += float(np.dot(running_costs, counts))
-
-    total_cost += float(np.dot(purchase_costs, machine_vector))
-
-    return ScheduleResult(
-        total_cost=total_cost,
-        machine_vector=machine_vector,
-        upper_bound=schedule.upper_bound,
-        time_slot_solutions=shaken_slots,
+    return _recreate_with_opened_bins(
+        schedule,
+        job_matrix,
+        capacities,
+        requirements,
+        purchase_costs,
+        running_costs,
+        opened_bins_fn=opened_bins_fn,
     )
 
 
@@ -277,63 +289,39 @@ def _shake_penalize_dominant_type(
     """
     Remove the dominant bin type, penalize it, and rebuild with FFD Largest.
     """
-    job_matrix = np.asarray(job_matrix, dtype=int)
-    if job_matrix.ndim == 1:
-        job_matrix = job_matrix.reshape(1, -1)
-    num_types = capacities.shape[1]
-
     dominant_type = _dominant_bin_type(schedule)
     if dominant_type is None:
         return schedule
 
-    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
-    updated_purchase = purchase_vec.copy()
-    updated_running = running_vec.copy()
+    num_types = capacities.shape[1]
+
+    base_purchase = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    base_running = np.asarray(running_costs, dtype=float).reshape(-1)
+    updated_purchase = base_purchase.copy()
+    updated_running = base_running.copy()
     updated_purchase[dominant_type] = np.sum(updated_purchase)
     updated_running[dominant_type] = np.sum(updated_running)
 
-    shaken_slots: list[TimeSlotSolution] = []
-    for slot_idx, slot in enumerate(schedule.time_slot_solutions):
+    def opened_bins_fn(
+        _slot_idx: int, slot: TimeSlotSolution, _num_types: int
+    ) -> np.ndarray:
         kept_bins = [
             bin_info
             for bin_info in _copy_bins(slot.bins)
             if bin_info.bin_type != dominant_type
         ]
-        opened_bins = _machine_counts_from_bins(kept_bins, num_types)
-        job_counts = job_matrix[slot_idx].reshape(-1)
+        return _machine_counts_from_bins(kept_bins, num_types)
 
-        packing_result = first_fit_decreasing_largest(
-            capacities,
-            requirements,
-            updated_purchase,
-            updated_running,
-            L=job_counts,
-            opened_bins=opened_bins,
-        )
-        recreated_slot = build_time_slot_solution(
-            packing_result.bins,
-            num_types,
-            requirements,
-            running_costs=updated_running,
-        )
-        shaken_slots.append(recreated_slot)
-
-    machine_vector = np.zeros_like(updated_purchase, dtype=int)
-    total_cost = 0.0
-
-    for slot in shaken_slots:
-        counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
-        machine_vector = np.maximum(machine_vector, counts)
-        total_cost += float(np.dot(updated_running, counts))
-
-    total_cost += float(np.dot(updated_purchase, machine_vector))
-
-    return ScheduleResult(
-        total_cost=total_cost,
-        machine_vector=machine_vector,
-        upper_bound=schedule.upper_bound,
-        time_slot_solutions=shaken_slots,
+    return _recreate_with_opened_bins(
+        schedule,
+        job_matrix,
+        capacities,
+        requirements,
+        purchase_costs,
+        running_costs,
+        opened_bins_fn=opened_bins_fn,
+        purchase_costs_override=updated_purchase,
+        running_costs_override=updated_running,
     )
 
 
