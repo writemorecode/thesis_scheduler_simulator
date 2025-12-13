@@ -239,7 +239,6 @@ def first_fit(
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
     purchased_bins: np.ndarray | Sequence[int] | None = None,
-    initial: bool = False,
 ) -> BinPackingResult:
     """
     Run the first-fit heterogeneous multidimensional bin packing heuristic.
@@ -353,24 +352,15 @@ def first_fit(
             if placed:
                 continue
 
-            if not initial:
-                bin_type, requires_purchase = _select_bin_type_marginal_cost(
-                    j,
-                    demand,
-                    C,
-                    purchase_costs,
-                    opening_costs,
-                    purchased_counts,
-                    open_counts,
-                )
-            else:
-                bin_type, requires_purchase = _select_bin_type_random(
-                    j,
-                    demand,
-                    C,
-                    purchased_counts,
-                    open_counts,
-                )
+            bin_type, requires_purchase = _select_bin_type_marginal_cost(
+                j,
+                demand,
+                C,
+                purchase_costs,
+                opening_costs,
+                purchased_counts,
+                open_counts,
+            )
 
             incremental_cost = (
                 float(opening_costs[bin_type])
@@ -398,7 +388,6 @@ def first_fit_decreasing(
     L: np.ndarray,
     opened_bins: np.ndarray | Sequence[int] | None = None,
     purchased_bins: np.ndarray | Sequence[int] | None = None,
-    initial: bool = False,
 ) -> BinPackingResult:
     """
     Run first-fit after sorting job types in non-increasing order of resource demand.
@@ -423,7 +412,6 @@ def first_fit_decreasing(
         L_sorted,
         opened_bins=opened_bins,
         purchased_bins=purchased_bins,
-        initial=initial,
     )
 
     if J > 0:
