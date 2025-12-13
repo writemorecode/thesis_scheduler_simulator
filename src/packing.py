@@ -189,48 +189,6 @@ def _select_bin_type_random(
     return bin_type, requires_purchase
 
 
-def _select_bin_type_largest(
-    item_type: int,
-    demand: np.ndarray,
-    capacities: np.ndarray,
-    purchase_costs: np.ndarray,
-    opening_costs: np.ndarray,
-) -> int:
-    """
-    Choose the feasible bin type with the largest total capacity.
-
-    Ties are broken by lower operating cost, then lower purchase cost, then index.
-    """
-
-    fits_mask = np.all(capacities >= demand, axis=0)
-    if not np.any(fits_mask):
-        raise ValueError(
-            f"Item type {item_type} does not fit in any available bin type."
-        )
-
-    sizes = np.asarray(capacities, dtype=float).sum(axis=0)
-    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    opening_vec = np.asarray(opening_costs, dtype=float).reshape(-1)
-
-    best_type = None
-    best_key = None
-    for bin_type, fits in enumerate(fits_mask):
-        if not fits:
-            continue
-        size = float(sizes[bin_type])
-        key = (-size, opening_vec[bin_type], purchase_vec[bin_type], bin_type)
-        if best_key is None or key < best_key:
-            best_key = key
-            best_type = bin_type
-
-    if best_type is None:
-        raise ValueError(
-            f"Failed to choose a bin type for item type {item_type} using largest capacity rule."
-        )
-
-    return int(best_type)
-
-
 def first_fit(
     C: np.ndarray,
     R: np.ndarray,
