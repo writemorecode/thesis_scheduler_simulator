@@ -141,7 +141,7 @@ def _shake_remove_lowest_utilization_bins(
         slot_idx: int, slot: TimeSlotSolution, num_types: int
     ) -> np.ndarray:
         bins = _copy_bins(slot.bins)
-        rng.shuffle(bins)
+        rng.shuffle(np.array(bins))
         _sort_bins_by_utilization(bins, requirements, running_costs)
 
         ruin_count = 0
