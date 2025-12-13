@@ -365,7 +365,6 @@ def ruin_recreate_schedule(
         L=L,
         purchase_costs=c_p,
         running_costs=c_r,
-        purchased_bins=None,
     )
     x = x_0
     x_best = x_0

@@ -97,7 +97,6 @@ def _build_scheduler(
                 L=problem.job_counts,
                 purchase_costs=problem.purchase_costs,
                 running_costs=problem.running_costs,
-                purchased_bins=None,
             )
 
         return _ffd

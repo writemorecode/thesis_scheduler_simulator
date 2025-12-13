@@ -435,7 +435,6 @@ def ffd_schedule(
     L: np.ndarray,
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
-    purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> ScheduleResult:
     """
     Build a multi-slot schedule by running FFD independently per slot.
@@ -475,22 +474,11 @@ def ffd_schedule(
     if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
-    if purchased_bins is None:
-        purchased_bins = np.zeros(M, dtype=int)
-    else:
-        purchased_bins = np.asarray(purchased_bins, dtype=int).reshape(-1)
-        if purchased_bins.shape[0] != M:
-            raise ValueError(
-                f"purchased_bins must have one entry per machine type ({M})."
-            )
-        if np.any(purchased_bins < 0):
-            raise ValueError("purchased_bins must contain non-negative counts.")
-        purchased_bins = purchased_bins.copy()
-    initial_purchased = purchased_bins.copy()
+    initial_purchased = np.zeros(M, dtype=int)
 
     time_slot_solutions: List[TimeSlotSolution] = []
     machine_vector = np.zeros(M, dtype=int)
-    running_total = 0.0
+    total_cost = 0.0
 
     for slot_jobs in L:
         if np.all(slot_jobs == 0):
@@ -498,30 +486,20 @@ def ffd_schedule(
                 machine_counts=np.zeros(M, dtype=int), bins=[]
             )
         else:
-            # Reuse ``purchased_bins`` so purchase costs are paid only once across slots.
             ffd_result = first_fit_decreasing(
                 C=C,
                 R=R,
                 purchase_costs=purchase_vec,
                 opening_costs=running_vec,
                 L=slot_jobs,
-                purchased_bins=purchased_bins,
-                initial=True,
+                purchased_bins=initial_purchased,
             )
 
             slot_solution = build_time_slot_solution(ffd_result.bins, M, R, running_vec)
 
         time_slot_solutions.append(slot_solution)
         machine_vector = np.maximum(machine_vector, slot_solution.machine_counts)
-        running_total += float(np.dot(running_vec, slot_solution.machine_counts))
-
-    # Recompute total cost to align with ScheduleResult.validate regardless of the
-    # initial purchased bin counts passed in.
-    # Only charge purchases beyond the baseline provided in ``purchased_bins``.
-    incremental_purchases = np.maximum(purchased_bins - initial_purchased, 0)
-    cost = float(np.dot(purchase_vec, incremental_purchases))
-    total_cost = cost + running_total
-    print(f"Purchase cost: {cost}, Running cost: {running_total}")
+        total_cost += float(np.dot(running_vec, slot_solution.machine_counts))
 
     return ScheduleResult(
         total_cost=total_cost,
