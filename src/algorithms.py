@@ -64,7 +64,6 @@ class ScheduleResult:
 
     total_cost: float
     machine_vector: np.ndarray
-    upper_bound: np.ndarray | None
     time_slot_solutions: List[TimeSlotSolution]
     purchased_baseline: np.ndarray | None = None
 
@@ -229,12 +228,6 @@ class ScheduleResult:
         if not np.array_equal(machine_vector, expected_machine_vector):
             raise ValueError("machine_vector does not match the per-slot usage.")
 
-        # upper_bound_vec = np.asarray(self.upper_bound, dtype=int).reshape(-1)
-        # if upper_bound_vec.shape[0] != M:
-        #     raise ValueError("upper_bound must have one entry per machine type.")
-        # if np.any(machine_vector > upper_bound_vec):
-        #     raise ValueError("machine_vector exceeds the provided upper bound.")
-
         if purchase_vec is not None and running_vec is not None:
             if baseline_vec is None:
                 baseline_vec = np.zeros(M, dtype=int)
@@ -294,18 +287,16 @@ class ScheduleResult:
             return f"[{', '.join(entries)}]"
 
         lines = [f"Total cost: {self.total_cost:.2f}"]
-        lines.append("Machine selection (count / upper bound):")
+        lines.append("Machine selection (count):")
 
         machine_counts = np.asarray(self.machine_vector).reshape(-1)
-        bounds = np.asarray(self.upper_bound).reshape(-1)
-        max_len = max(machine_counts.size, bounds.size)
+        max_len = machine_counts.size
         if max_len == 0:
             lines.append("  (no machines)")
         else:
             for idx in range(max_len):
                 count = int(machine_counts[idx]) if idx < machine_counts.size else 0
-                bound = int(bounds[idx]) if idx < bounds.size else 0
-                lines.append(f"  Type {idx}: {count} selected (upper bound {bound})")
+                lines.append(f"  Type {idx}: {count} selected")
 
         lines.append("Time slots:")
         if not self.time_slot_solutions:
@@ -504,7 +495,6 @@ def ffd_schedule(
     return ScheduleResult(
         total_cost=total_cost,
         machine_vector=machine_vector,
-        upper_bound=purchased_bins.copy(),
         time_slot_solutions=time_slot_solutions,
         purchased_baseline=initial_purchased,
     )
@@ -738,6 +728,5 @@ def repack_schedule(
     return ScheduleResult(
         total_cost=total_cost,
         machine_vector=machine_vector,
-        upper_bound=schedule.upper_bound,
         time_slot_solutions=repacked_slots,
     )

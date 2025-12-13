@@ -39,7 +39,6 @@ def _aggregate_schedule(
     slots: Sequence[TimeSlotSolution],
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
-    upper_bound: float,
 ) -> ScheduleResult:
     """Compute machine vector and total cost from rebuilt slots."""
 
@@ -59,7 +58,6 @@ def _aggregate_schedule(
     return ScheduleResult(
         total_cost=total_cost,
         machine_vector=machine_vector,
-        upper_bound=upper_bound,
         time_slot_solutions=list(slots),
     )
 
@@ -121,7 +119,6 @@ def _recreate_with_opened_bins(
         shaken_slots,
         purchase_vec,
         running_vec,
-        upper_bound=schedule.upper_bound,
     )
 
 
