@@ -12,3 +12,5 @@ wheels/
 *.png
 *.csv
 dataset
+misc
+*.txt
