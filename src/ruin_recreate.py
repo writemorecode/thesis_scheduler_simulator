@@ -15,7 +15,8 @@ from algorithms import (
     ffd_schedule,
     repack_schedule,
 )
-from packing import first_fit_decreasing_largest
+
+from packing import first_fit_decreasing
 from problem_generation import ProblemInstance
 
 MAX_FRACTION = 0.95
@@ -99,7 +100,7 @@ def _recreate_with_opened_bins(
     for slot_idx, slot in enumerate(schedule.time_slot_solutions):
         opened_bins = opened_bins_fn(slot_idx, slot, num_types)
         job_counts = job_matrix[slot_idx].reshape(-1)
-        packing_result = first_fit_decreasing_largest(
+        packing_result = first_fit_decreasing(
             capacities,
             requirements,
             purchase_vec,
