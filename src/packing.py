@@ -168,27 +168,6 @@ def _select_bin_type_marginal_cost(
     return best_type, best_requires_purchase
 
 
-def _select_bin_type_random(
-    item_type: int,
-    demand: np.ndarray,
-    capacities: np.ndarray,
-    purchased_counts: np.ndarray,
-    open_counts: np.ndarray,
-) -> tuple[int, bool]:
-    """Pick a random feasible bin type for ``demand``."""
-
-    fits_mask = np.all(capacities >= demand, axis=0)
-    if not np.any(fits_mask):
-        raise ValueError(
-            f"Item type {item_type} does not fit in any available bin type."
-        )
-
-    feasible_types = np.flatnonzero(fits_mask)
-    bin_type = int(np.random.default_rng().choice(feasible_types))
-    requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
-    return bin_type, requires_purchase
-
-
 def first_fit(
     C: np.ndarray,
     R: np.ndarray,
