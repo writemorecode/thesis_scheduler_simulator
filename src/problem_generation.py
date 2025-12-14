@@ -58,6 +58,105 @@ def _choose_primary_resources(
     return primary
 
 
+def _generate_capacities_and_requirements(
+    *,
+    K: int,
+    M: int,
+    J: int,
+    base_capacity: int,
+    base_demand: int,
+    mult_low: int,
+    mult_high: int,
+    cap_jitter_low: float,
+    cap_jitter_high: float,
+    dem_jitter_low: float,
+    dem_jitter_high: float,
+    job_primary: np.ndarray,
+    machine_primary: np.ndarray,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    capacities = np.full((K, M), base_capacity, dtype=float)
+    requirements = np.full((K, J), base_demand, dtype=float)
+
+    capacities *= rng.uniform(cap_jitter_low, cap_jitter_high, size=(K, M))
+    requirements *= rng.uniform(dem_jitter_low, dem_jitter_high, size=(K, J))
+
+    for m, primary in enumerate(machine_primary):
+        if primary >= 0:
+            mult = rng.integers(mult_low, mult_high + 1)
+            capacities[primary, m] *= mult
+
+    for j, primary in enumerate(job_primary):
+        if primary >= 0:
+            mult = rng.integers(mult_low, mult_high + 1)
+            requirements[primary, j] *= mult
+
+    capacities = np.maximum(1, np.rint(capacities)).astype(int)
+    requirements = np.maximum(1, np.rint(requirements)).astype(int)
+
+    for j in range(J):
+        fits = np.all(capacities >= requirements[:, j][:, None], axis=0)
+        if fits.any():
+            continue
+
+        primary = job_primary[j]
+        if primary >= 0 and np.any(machine_primary == primary):
+            candidates = np.where(machine_primary == primary)[0]
+            target = int(rng.choice(candidates))
+        else:
+            target = int(np.argmax(np.sum(capacities, axis=0)))
+
+        deficit = np.maximum(0, requirements[:, j] - capacities[:, target])
+        capacities[:, target] += deficit
+
+    return capacities, requirements
+
+
+def _generate_job_counts(
+    *,
+    J: int,
+    T: int,
+    base_slot_load: int,
+    load_jitter_low: float,
+    load_jitter_high: float,
+    slot_focus_ratio: float,
+    focus_low: int,
+    focus_high: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    job_counts = np.zeros((J, T), dtype=int)
+    for t in range(T):
+        slot_total = max(
+            1,
+            int(round(base_slot_load * rng.uniform(load_jitter_low, load_jitter_high))),
+        )
+        weights = rng.uniform(0.5, 1.0, size=J)
+
+        if rng.random() < slot_focus_ratio and J > 0:
+            num_focus = rng.integers(1, min(3, J) + 1)
+            focus_jobs = rng.choice(J, size=num_focus, replace=False)
+            focus_mult = rng.integers(focus_low, focus_high + 1)
+            weights[focus_jobs] *= focus_mult
+
+        weights_sum = float(weights.sum())
+        probs = weights / weights_sum
+        job_counts[:, t] = rng.multinomial(slot_total, probs)
+
+    return job_counts
+
+
+def _compute_costs(
+    capacities: np.ndarray,
+    alpha: np.ndarray | None,
+    gamma: float | None,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    alpha_vector = alpha if alpha is not None else rng.random(capacities.shape[0])
+    purchase_costs = capacities.T @ alpha_vector
+    running_costs = gamma * purchase_costs
+    return purchase_costs, running_costs
+
+
 def generate_random_instance(
     K: int,
     M: int,
@@ -158,64 +257,41 @@ def generate_random_instance(
         prob=machine_pref,
     )
 
-    capacities = np.full((K, M), base_capacity, dtype=float)
-    requirements = np.full((K, J), base_demand, dtype=float)
+    capacities, requirements = _generate_capacities_and_requirements(
+        K=K,
+        M=M,
+        J=J,
+        base_capacity=base_capacity,
+        base_demand=base_demand,
+        mult_low=mult_low,
+        mult_high=mult_high,
+        cap_jitter_low=cap_jitter_low,
+        cap_jitter_high=cap_jitter_high,
+        dem_jitter_low=dem_jitter_low,
+        dem_jitter_high=dem_jitter_high,
+        job_primary=job_primary,
+        machine_primary=machine_primary,
+        rng=rng,
+    )
 
-    capacities *= rng.uniform(cap_jitter_low, cap_jitter_high, size=(K, M))
-    requirements *= rng.uniform(dem_jitter_low, dem_jitter_high, size=(K, J))
+    job_counts = _generate_job_counts(
+        J=J,
+        T=T,
+        base_slot_load=base_slot_load,
+        load_jitter_low=load_jitter_low,
+        load_jitter_high=load_jitter_high,
+        slot_focus_ratio=slot_focus_ratio,
+        focus_low=focus_low,
+        focus_high=focus_high,
+        rng=rng,
+    )
 
-    # Amplify primary resources.
-    for m, primary in enumerate(machine_primary):
-        if primary >= 0:
-            mult = rng.integers(mult_low, mult_high + 1)
-            capacities[primary, m] *= mult
-
-    for j, primary in enumerate(job_primary):
-        if primary >= 0:
-            mult = rng.integers(mult_low, mult_high + 1)
-            requirements[primary, j] *= mult
-
-    capacities = np.maximum(1, np.rint(capacities)).astype(int)
-    requirements = np.maximum(1, np.rint(requirements)).astype(int)
-
-    # Time-slot job counts with occasional focus on a few job types.
-    job_counts = np.zeros((J, T), dtype=int)
-    for t in range(T):
-        slot_total = max(
-            1,
-            int(round(base_slot_load * rng.uniform(load_jitter_low, load_jitter_high))),
-        )
-        weights = rng.uniform(0.5, 1.0, size=J)
-
-        if rng.random() < slot_focus_ratio and J > 0:
-            num_focus = rng.integers(1, min(3, J) + 1)
-            focus_jobs = rng.choice(J, size=num_focus, replace=False)
-            focus_mult = rng.integers(focus_low, focus_high + 1)
-            weights[focus_jobs] *= focus_mult
-
-        weights_sum = float(weights.sum())
-        probs = weights / weights_sum
-        job_counts[:, t] = rng.multinomial(slot_total, probs)
-
-    # Guarantee each job type fits somewhere by boosting the closest matching machine if needed.
-    for j in range(J):
-        fits = np.all(capacities >= requirements[:, j][:, None], axis=0)
-        if fits.any():
-            continue
-
-        primary = job_primary[j]
-        if primary >= 0 and np.any(machine_primary == primary):
-            candidates = np.where(machine_primary == primary)[0]
-            target = int(rng.choice(candidates))
-        else:
-            target = int(np.argmax(np.sum(capacities, axis=0)))
-
-        deficit = np.maximum(0, requirements[:, j] - capacities[:, target])
-        capacities[:, target] += deficit
-
-    alpha = rng.random(K)
-    purchase_costs = capacities.T @ alpha
-    running_costs = gamma * purchase_costs
+    purchase_costs, running_costs = _compute_costs(
+        capacities=capacities,
+        alpha=alpha,
+        gamma=gamma,
+        rng=rng,
+    )
 
     return ProblemInstance(
         capacities=capacities,
