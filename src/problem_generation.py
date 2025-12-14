@@ -189,6 +189,27 @@ def generate_random_instance(
     to have CPU-optimized machines available. All outputs are integers and every job type is
     guaranteed to be packable into at least one machine type. The job-count matrix L (J×T)
     introduces time-slot variability with occasional focus on a subset of job types.
+
+    Parameters
+    ----------
+    K, M, J, T: dimensionality of resources, machines, jobs, and time slots.
+    base_capacity: mean capacity per resource per machine before jitter and specialization.
+    base_demand: mean requirement per resource per job before jitter and specialization.
+    specialization_multiplier: low/high integer multiplier applied to a primary resource when
+        a job or machine is specialized.
+    capacity_jitter: multiplicative jitter range applied to base capacities.
+    demand_jitter: multiplicative jitter range applied to base demands.
+    specialized_job_ratio: fraction of job types that get a primary resource.
+    specialized_machine_ratio: fraction of machine types that get a primary resource.
+    correlation: weight pulling machine specialization probabilities toward the job histogram
+        (1.0 follows jobs exactly, 0.0 is uniform over resources).
+    base_slot_load: mean total job count per time slot before jitter.
+    slot_load_jitter: multiplicative jitter range applied to per-slot load.
+    slot_focus_ratio: probability that a slot emphasizes a subset of jobs.
+    slot_focus_multiplier: low/high integer multiplier to boost focused job types in a slot.
+    alpha: optional resource cost weight vector (K,). Randomly sampled if None.
+    gamma: running-cost factor applied to purchase costs.
+    rng/seed: random generator or seed used for reproducibility.
     """
 
     if K <= 0 or M <= 0 or J <= 0 or T <= 0:
