@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
+# from typing import tuple
 
 import numpy as np
 
@@ -14,100 +14,212 @@ class ProblemInstance:
 
     capacities: np.ndarray  # C shape: (K, M)
     requirements: np.ndarray  # R shape: (K, J)
-    job_counts: np.ndarray  # L shape: (T, J)
+    job_counts: np.ndarray  # L shape: (J, T)
     purchase_costs: np.ndarray  # shape: (M,)
     running_costs: np.ndarray  # shape: (M,)
 
 
+def _validate_ratio(name: str, value: float) -> None:
+    if not (0.0 <= value <= 1.0):
+        raise ValueError(f"{name} must be in [0, 1], got {value}.")
+
+
+def _validate_range(name: str, bounds: tuple[float, float]) -> tuple[float, float]:
+    low, high = bounds
+    if low <= 0 or high < low:
+        raise ValueError(
+            f"{name} must have positive bounds with low <= high, got {bounds}."
+        )
+    return low, high
+
+
+def _choose_primary_resources(
+    count: int,
+    num_resources: int,
+    specialized_ratio: float,
+    rng: np.random.Generator,
+    prob: np.ndarray | None = None,
+) -> np.ndarray:
+    """Assign an optional primary resource to each entity (job or machine)."""
+    num_specialized = int(round(count * specialized_ratio))
+    indices = np.arange(count)
+    specialized_indices = (
+        rng.choice(indices, size=num_specialized, replace=False)
+        if num_specialized
+        else np.array([], dtype=int)
+    )
+
+    primary = np.full(count, -1, dtype=int)
+    if num_specialized:
+        probs = prob if prob is not None else None
+        primary[specialized_indices] = rng.choice(
+            num_resources, size=num_specialized, p=probs
+        )
+    return primary
+
+
 def generate_random_instance(
     K: int,
-    J: int,
     M: int,
+    J: int,
     T: int,
     *,
-    rng: np.random.Generator,
-    capacity_range: Tuple[int, int] = (20, 40),
-    demand_fraction: Tuple[float, float] = (0.10, 0.30),
-    job_count_range: Tuple[int, int] = (10, 30),
+    base_capacity: int = 20,
+    base_demand: int = 8,
+    specialization_multiplier: tuple[int, int] = (2, 4),
+    capacity_jitter: tuple[float, float] = (0.8, 1.3),
+    demand_jitter: tuple[float, float] = (0.8, 1.2),
+    specialized_job_ratio: float = 0.7,
+    specialized_machine_ratio: float = 0.7,
+    correlation: float = 0.7,
+    base_slot_load: int = 12,
+    slot_load_jitter: tuple[float, float] = (0.6, 1.4),
+    slot_focus_ratio: float = 0.6,
+    slot_focus_multiplier: tuple[int, int] = (5, 8),
     alpha: np.ndarray | None = None,
-    gamma: float = 0.05,
+    gamma: float | None = 0.10,
+    rng: np.random.Generator | None = None,
+    seed: int | None = None,
 ) -> ProblemInstance:
     """
-    Generate a valid random problem instance for the scheduler.
+    Generate heterogeneous capacity (C) and demand (R) matrices with correlated specializations.
 
-    The output matrices follow the notation used in ``main.py`` and ``algorithms.py``:
-    - capacities (C): (K, M) matrix of per-dimension machine capacities.
-    - requirements (R): (K, J) matrix of per-dimension job demands.
-    - job_counts (L): (T, J) non-negative integer matrix with job counts per slot.
-    - purchase_costs (c_p): length-M vector computed as C.T @ alpha, where alpha sums to 1.
-    - running_costs (c_r): length-M vector computed as gamma * purchase_costs.
-
-    Parameters let you control value ranges; defaults keep instances small but diverse.
+    Each job and machine type may have a primary resource that gets amplified by a multiplier,
+    creating CPU-, memory-, or disk-leaning profiles. Machine specialization probabilities are
+    biased toward job specializations via ``correlation`` so that CPU-heavy jobs are more likely
+    to have CPU-optimized machines available. All outputs are integers and every job type is
+    guaranteed to be packable into at least one machine type. The job-count matrix L (J×T)
+    introduces time-slot variability with occasional focus on a subset of job types.
     """
 
-    if K <= 0 or J <= 0 or M <= 0 or T <= 0:
-        raise ValueError("K, J, M, and T must be positive integers.")
+    if K <= 0 or M <= 0 or J <= 0 or T <= 0:
+        raise ValueError("K, M, J, and T must be positive integers.")
 
-    low_cap, high_cap = capacity_range
-    if low_cap <= 0 or high_cap < low_cap:
-        raise ValueError("capacity_range must be positive with low <= high.")
+    _validate_ratio("specialized_job_ratio", specialized_job_ratio)
+    _validate_ratio("specialized_machine_ratio", specialized_machine_ratio)
+    _validate_ratio("correlation", correlation)
+    _validate_ratio("slot_focus_ratio", slot_focus_ratio)
 
-    low_df, high_df = demand_fraction
-    if not (0 < low_df <= high_df):
+    if base_capacity <= 0 or base_demand <= 0:
+        raise ValueError("base_capacity and base_demand must be positive integers.")
+
+    mult_low, mult_high = specialization_multiplier
+    if mult_low < 1 or mult_high < mult_low:
         raise ValueError(
-            "demand_fraction must contain positive bounds with low <= high."
+            "specialization_multiplier must have bounds >= 1 with low <= high."
         )
 
-    low_jobs, high_jobs = job_count_range
-    if low_jobs < 0 or high_jobs < low_jobs:
-        raise ValueError("job_count_range must be non-negative with low <= high.")
+    cap_jitter_low, cap_jitter_high = _validate_range(
+        "capacity_jitter", capacity_jitter
+    )
+    dem_jitter_low, dem_jitter_high = _validate_range("demand_jitter", demand_jitter)
+    load_jitter_low, load_jitter_high = _validate_range(
+        "slot_load_jitter", slot_load_jitter
+    )
 
-    if gamma <= 0 or gamma >= 1:
-        raise ValueError("gamma must be a percentage in the range (0, 1).")
+    focus_low, focus_high = slot_focus_multiplier
+    if focus_low < 1 or focus_high < focus_low:
+        raise ValueError(
+            "slot_focus_multiplier must have bounds >= 1 with low <= high."
+        )
 
-    capacities = rng.integers(low_cap, high_cap + 1, size=(K, M), dtype=int)
+    if base_slot_load <= 0:
+        raise ValueError("base_slot_load must be positive.")
 
-    # Dimension weights alpha reflect the relative scarcity/value per resource.
-    if alpha is None:
-        alpha_raw = rng.random(K)
+    rng = rng or np.random.default_rng(seed)
+
+    # Specialize jobs and machines; machine specialization is biased toward job histogram.
+    job_primary = _choose_primary_resources(
+        count=J,
+        num_resources=K,
+        specialized_ratio=specialized_job_ratio,
+        rng=rng,
+    )
+
+    job_hist = (
+        np.bincount(job_primary[job_primary >= 0], minlength=K)
+        if np.any(job_primary >= 0)
+        else np.zeros(K)
+    )
+    if job_hist.sum() > 0:
+        job_dist = job_hist / job_hist.sum()
     else:
-        alpha_raw = np.asarray(alpha, dtype=float).reshape(-1)
-        if alpha_raw.shape[0] != K:
-            raise ValueError(f"alpha must have length {K}.")
-        if np.any(alpha_raw < 0):
-            raise ValueError("alpha entries must be non-negative.")
+        job_dist = np.full(K, 1.0 / K)
 
-    alpha_sum = float(np.sum(alpha_raw))
-    if alpha_sum <= 0:
-        raise ValueError("alpha must have a positive sum before normalization.")
+    uniform_dist = np.full(K, 1.0 / K)
+    machine_pref = correlation * job_dist + (1.0 - correlation) * uniform_dist
+    machine_pref = machine_pref / machine_pref.sum()
 
-    alpha = alpha_raw / alpha_sum
+    machine_primary = _choose_primary_resources(
+        count=M,
+        num_resources=K,
+        specialized_ratio=specialized_machine_ratio,
+        rng=rng,
+        prob=machine_pref,
+    )
 
-    # Each job type is guaranteed to fit in at least one machine by sampling
-    # demands as a fraction of a randomly chosen machine's capacity.
-    requirements = np.zeros((K, J), dtype=int)
-    for job_idx in range(J):
-        anchor_machine = rng.integers(0, M)
-        fractions = rng.uniform(low_df, high_df, size=(K,))
-        req = np.maximum(1, np.floor(capacities[:, anchor_machine] * fractions)).astype(
-            int
+    capacities = np.full((K, M), base_capacity, dtype=float)
+    requirements = np.full((K, J), base_demand, dtype=float)
+
+    capacities *= rng.uniform(cap_jitter_low, cap_jitter_high, size=(K, M))
+    requirements *= rng.uniform(dem_jitter_low, dem_jitter_high, size=(K, J))
+
+    # Amplify primary resources.
+    for m, primary in enumerate(machine_primary):
+        if primary >= 0:
+            mult = rng.integers(mult_low, mult_high + 1)
+            capacities[primary, m] *= mult
+
+    for j, primary in enumerate(job_primary):
+        if primary >= 0:
+            mult = rng.integers(mult_low, mult_high + 1)
+            requirements[primary, j] *= mult
+
+    capacities = np.maximum(1, np.rint(capacities)).astype(int)
+    requirements = np.maximum(1, np.rint(requirements)).astype(int)
+
+    # Time-slot job counts with occasional focus on a few job types.
+    job_counts = np.zeros((J, T), dtype=int)
+    for t in range(T):
+        slot_total = max(
+            1,
+            int(round(base_slot_load * rng.uniform(load_jitter_low, load_jitter_high))),
         )
-        req = np.minimum(req, capacities[:, anchor_machine])
-        requirements[:, job_idx] = req
+        weights = rng.uniform(0.5, 1.0, size=J)
 
-    job_counts = rng.integers(low_jobs, high_jobs + 1, size=(T, J), dtype=int)
-    if not np.any(job_counts):
-        # Ensure at least one job exists so downstream code exercises packing logic.
-        slot_idx = rng.integers(0, T)
-        job_idx = rng.integers(0, J)
-        job_counts[slot_idx, job_idx] = 1
+        if rng.random() < slot_focus_ratio and J > 0:
+            num_focus = rng.integers(1, min(3, J) + 1)
+            focus_jobs = rng.choice(J, size=num_focus, replace=False)
+            focus_mult = rng.integers(focus_low, focus_high + 1)
+            weights[focus_jobs] *= focus_mult
 
+        weights_sum = float(weights.sum())
+        probs = weights / weights_sum
+        job_counts[:, t] = rng.multinomial(slot_total, probs)
+
+    # Guarantee each job type fits somewhere by boosting the closest matching machine if needed.
+    for j in range(J):
+        fits = np.all(capacities >= requirements[:, j][:, None], axis=0)
+        if fits.any():
+            continue
+
+        primary = job_primary[j]
+        if primary >= 0 and np.any(machine_primary == primary):
+            candidates = np.where(machine_primary == primary)[0]
+            target = int(rng.choice(candidates))
+        else:
+            target = int(np.argmax(np.sum(capacities, axis=0)))
+
+        deficit = np.maximum(0, requirements[:, j] - capacities[:, target])
+        capacities[:, target] += deficit
+
+    alpha = rng.random(K)
     purchase_costs = capacities.T @ alpha
     running_costs = gamma * purchase_costs
 
     return ProblemInstance(
-        capacities=capacities.astype(float),
-        requirements=requirements.astype(float),
+        capacities=capacities,
+        requirements=requirements,
         job_counts=job_counts,
         purchase_costs=purchase_costs,
         running_costs=running_costs,
@@ -117,15 +229,12 @@ def generate_random_instance(
 def generate_dataset(
     num_instances: int,
     *,
-    K_range: Tuple[int, int],
-    J_range: Tuple[int, int],
-    M_range: Tuple[int, int],
-    T_range: Tuple[int, int],
+    K_range: tuple[int, int],
+    J_range: tuple[int, int],
+    M_range: tuple[int, int],
+    T_range: tuple[int, int],
     dataset_dir: str | Path = "dataset",
-    rng: np.random.Generator | None = None,
-    capacity_range: Tuple[int, int] = (5, 20),
-    demand_fraction: Tuple[float, float] = (0.1, 0.95),
-    job_count_range: Tuple[int, int] = (0, 10),
+    rng: np.random.Generator,
 ) -> list[dict[str, int | str]]:
     """
     Generate a dataset of random problem instances and store them on disk.
@@ -139,9 +248,7 @@ def generate_dataset(
     if num_instances <= 0:
         raise ValueError("num_instances must be a positive integer.")
 
-    rng = rng or np.random.default_rng()
-
-    def _sample_dimension(bounds: Tuple[int, int], name: str) -> int:
+    def _sample_dimension(bounds: tuple[int, int], name: str) -> int:
         low, high = bounds
         if low <= 0 or high < low:
             raise ValueError(f"{name} must be positive with low <= high.")
@@ -164,9 +271,6 @@ def generate_dataset(
             M=M,
             T=T,
             rng=rng,
-            capacity_range=capacity_range,
-            demand_fraction=demand_fraction,
-            job_count_range=job_count_range,
         )
 
         filename = f"instance_{idx:04d}.npz"
