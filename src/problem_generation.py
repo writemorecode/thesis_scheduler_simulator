@@ -114,6 +114,7 @@ def _generate_capacities_and_requirements(
 
 def _generate_job_counts(
     *,
+    K: int,
     J: int,
     T: int,
     base_slot_load: int,
@@ -122,8 +123,36 @@ def _generate_job_counts(
     slot_focus_ratio: float,
     focus_low: int,
     focus_high: int,
+    job_primary: np.ndarray,
+    slot_primary_correlation: float,
     rng: np.random.Generator,
 ) -> np.ndarray:
+    """Sample job-count matrix L with slot primary resources that bias toward matching jobs."""
+    job_hist = (
+        np.bincount(job_primary[job_primary >= 0], minlength=K)
+        if np.any(job_primary >= 0)
+        else np.zeros(K)
+    )
+    if job_hist.sum() > 0:
+        job_dist = job_hist / job_hist.sum()
+    else:
+        job_dist = np.full(K, 1.0 / K)
+
+    uniform_dist = np.full(K, 1.0 / K)
+    slot_pref = (
+        slot_primary_correlation * job_dist
+        + (1.0 - slot_primary_correlation) * uniform_dist
+    )
+    slot_pref = slot_pref / slot_pref.sum()
+
+    slot_primary = _choose_primary_resources(
+        count=T,
+        num_resources=K,
+        specialized_ratio=slot_focus_ratio,
+        rng=rng,
+        prob=slot_pref,
+    )
+
     job_counts = np.zeros((J, T), dtype=int)
     for t in range(T):
         slot_total = max(
@@ -132,11 +161,12 @@ def _generate_job_counts(
         )
         weights = rng.uniform(0.5, 1.0, size=J)
 
-        if rng.random() < slot_focus_ratio and J > 0:
-            num_focus = rng.integers(1, min(3, J) + 1)
-            focus_jobs = rng.choice(J, size=num_focus, replace=False)
-            focus_mult = rng.integers(focus_low, focus_high + 1)
-            weights[focus_jobs] *= focus_mult
+        primary = slot_primary[t]
+        if primary >= 0 and J > 0:
+            matching_jobs = job_primary == primary
+            if matching_jobs.any():
+                focus_mult = rng.integers(focus_low, focus_high + 1)
+                weights[matching_jobs] *= focus_mult
 
         weights_sum = float(weights.sum())
         probs = weights / weights_sum
@@ -174,6 +204,7 @@ def generate_random_instance(
     base_slot_load: int = 12,
     slot_load_jitter: tuple[float, float] = (0.6, 1.4),
     slot_focus_ratio: float = 0.6,
+    slot_specialization_correlation: float = 0.7,
     slot_focus_multiplier: tuple[int, int] = (5, 8),
     alpha: np.ndarray | None = None,
     gamma: float | None = 0.10,
@@ -188,7 +219,8 @@ def generate_random_instance(
     biased toward job specializations via ``correlation`` so that CPU-heavy jobs are more likely
     to have CPU-optimized machines available. All outputs are integers and every job type is
     guaranteed to be packable into at least one machine type. The job-count matrix L (J×T)
-    introduces time-slot variability with occasional focus on a subset of job types.
+    assigns time-slot primary resources (via ``slot_focus_ratio``) to emphasize job types whose
+    primary resource matches the slot, mirroring the specialization approach used for C and R.
 
     Parameters
     ----------
@@ -205,8 +237,11 @@ def generate_random_instance(
         (1.0 follows jobs exactly, 0.0 is uniform over resources).
     base_slot_load: mean total job count per time slot before jitter.
     slot_load_jitter: multiplicative jitter range applied to per-slot load.
-    slot_focus_ratio: probability that a slot emphasizes a subset of jobs.
-    slot_focus_multiplier: low/high integer multiplier to boost focused job types in a slot.
+    slot_focus_ratio: fraction of time slots assigned a primary resource (specialized slots).
+    slot_specialization_correlation: weight pulling slot specialization probabilities toward the
+        job specialization histogram (1.0 follows jobs exactly, 0.0 is uniform over resources).
+    slot_focus_multiplier: low/high integer multiplier to boost job types matching a slot's primary
+        resource.
     alpha: optional resource cost weight vector (K,). Randomly sampled if None.
     gamma: running-cost factor applied to purchase costs.
     rng/seed: random generator or seed used for reproducibility.
@@ -219,6 +254,7 @@ def generate_random_instance(
     _validate_ratio("specialized_machine_ratio", specialized_machine_ratio)
     _validate_ratio("correlation", correlation)
     _validate_ratio("slot_focus_ratio", slot_focus_ratio)
+    _validate_ratio("slot_specialization_correlation", slot_specialization_correlation)
 
     if base_capacity <= 0 or base_demand <= 0:
         raise ValueError("base_capacity and base_demand must be positive integers.")
@@ -296,6 +332,7 @@ def generate_random_instance(
     )
 
     job_counts = _generate_job_counts(
+        K=K,
         J=J,
         T=T,
         base_slot_load=base_slot_load,
@@ -304,6 +341,8 @@ def generate_random_instance(
         slot_focus_ratio=slot_focus_ratio,
         focus_low=focus_low,
         focus_high=focus_high,
+        job_primary=job_primary,
+        slot_primary_correlation=slot_specialization_correlation,
         rng=rng,
     )
 
