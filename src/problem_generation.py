@@ -153,7 +153,7 @@ def _generate_job_counts(
         prob=slot_pref,
     )
 
-    job_counts = np.zeros((J, T), dtype=int)
+    job_counts = np.zeros((T, J), dtype=int)
     for t in range(T):
         slot_total = max(
             1,
@@ -170,7 +170,7 @@ def _generate_job_counts(
 
         weights_sum = float(weights.sum())
         probs = weights / weights_sum
-        job_counts[:, t] = rng.multinomial(slot_total, probs)
+        job_counts[t, :] = rng.multinomial(slot_total, probs)
 
     return job_counts
 
