@@ -358,3 +358,197 @@ def first_fit_decreasing(
             bin_info.item_counts = bin_info.item_counts[inverse_perm]
 
     return result
+
+
+def first_fit_largest(
+    C: np.ndarray,
+    R: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    L: np.ndarray,
+    opened_bins: np.ndarray | Sequence[int] | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
+) -> BinPackingResult:
+    """
+    First-fit packing that opens the largest feasible bin type when needed.
+
+    Existing bins are tried in insertion order. When no current bin fits an item,
+    the new bin type is chosen by maximum total capacity (tie broken by cost).
+    """
+
+    C = np.asarray(C, dtype=float)
+    R = np.asarray(R, dtype=float)
+
+    if C.ndim != 2 or R.ndim != 2:
+        raise ValueError("C and R must be 2D matrices.")
+
+    K, M = C.shape
+    K_items, J = R.shape
+
+    if K != K_items:
+        raise ValueError(
+            f"Bin and item matrices must have the same number of rows (dimensions). Got {K} and {K_items}."
+        )
+
+    if not np.all(R >= 0):
+        raise ValueError("All job demand values must be non-negative")
+
+    purchase_costs = _prepare_vector(purchase_costs, M, "purchase_costs")
+    opening_costs = _prepare_vector(opening_costs, M, "opening_costs")
+    L = np.asarray(L, dtype=int).reshape(-1)
+    if L.shape[0] != J:
+        raise ValueError(f"L must have length {J}, got {L.shape[0]}.")
+    if np.any(L < 0):
+        raise ValueError("Job counts in L must be non-negative.")
+
+    opened_bins_vec = (
+        np.zeros(M, dtype=int)
+        if opened_bins is None
+        else _prepare_count_vector(opened_bins, M, "opened_bins")
+    )
+
+    purchased_counts = (
+        np.zeros(M, dtype=int)
+        if purchased_bins is None
+        else _prepare_count_vector(purchased_bins, M, "purchased_bins")
+    )
+    initial_purchased = purchased_counts.copy()
+    purchased_counts[:] = np.maximum(purchased_counts, opened_bins_vec)
+
+    open_counts = opened_bins_vec.copy()
+    preopened_extra = np.maximum(open_counts - initial_purchased, 0)
+
+    bins: List[BinInfo] = []
+    total_cost = float(np.dot(open_counts, opening_costs))
+    if np.any(preopened_extra):
+        total_cost += float(np.dot(preopened_extra, purchase_costs))
+
+    def _create_bin(bin_type: int) -> BinInfo:
+        capacity = C[:, [bin_type]].copy()
+        bin_info = BinInfo(
+            bin_type=bin_type,
+            capacity=capacity.copy(),
+            remaining_capacity=capacity.copy(),
+            item_counts=np.zeros(J, dtype=int),
+        )
+        bins.append(bin_info)
+        return bin_info
+
+    for bin_type, count in enumerate(open_counts):
+        for _ in range(int(count)):
+            _create_bin(bin_type)
+
+    for j in range(J):
+        demand = R[:, [j]]
+
+        for _ in range(int(L[j])):
+            placed = False
+            for bin_info in bins:
+                if np.all(bin_info.remaining_capacity >= demand):
+                    bin_info.remaining_capacity -= demand
+                    bin_info.item_counts[j] += 1
+                    bin_info.update_utilization_cache()
+                    placed = True
+                    break
+
+            if placed:
+                continue
+
+            bin_type = _select_bin_type_largest(
+                j, demand, C, purchase_costs, opening_costs
+            )
+            requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
+
+            incremental_cost = (
+                float(opening_costs[bin_type])
+                if not requires_purchase
+                else float(purchase_costs[bin_type] + opening_costs[bin_type])
+            )
+            total_cost += incremental_cost
+            open_counts[bin_type] += 1
+            if open_counts[bin_type] > purchased_counts[bin_type]:
+                purchased_counts[bin_type] = open_counts[bin_type]
+
+            bin_info = _create_bin(bin_type)
+            bin_info.remaining_capacity -= demand
+            bin_info.item_counts[j] += 1
+            bin_info.update_utilization_cache()
+
+    return BinPackingResult(total_cost=total_cost, bins=bins)
+
+
+def first_fit_decreasing_largest(
+    C: np.ndarray,
+    R: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    L: np.ndarray,
+    opened_bins: np.ndarray | Sequence[int] | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
+) -> BinPackingResult:
+    """
+    FFD variant that opens the largest feasible bin type for new placements.
+    """
+
+    R_sorted, L_sorted, sorted_indices = _sort_items_decreasing(R, L)
+    J = R_sorted.shape[1]
+
+    result = first_fit_largest(
+        C,
+        R_sorted,
+        purchase_costs,
+        opening_costs,
+        L_sorted,
+        opened_bins=opened_bins,
+        purchased_bins=purchased_bins,
+    )
+
+    if J > 0:
+        inverse_perm = np.empty_like(sorted_indices)
+        inverse_perm[sorted_indices] = np.arange(J)
+        for bin_info in result.bins:
+            bin_info.item_counts = bin_info.item_counts[inverse_perm]
+
+    return result
+
+
+def _select_bin_type_largest(
+    item_type: int,
+    demand: np.ndarray,
+    capacities: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+) -> int:
+    """
+    Choose the feasible bin type with the largest total capacity.
+
+    Ties are broken by lower operating cost, then lower purchase cost, then index.
+    """
+
+    fits_mask = np.all(capacities >= demand, axis=0)
+    if not np.any(fits_mask):
+        raise ValueError(
+            f"Item type {item_type} does not fit in any available bin type."
+        )
+
+    sizes = np.asarray(capacities, dtype=float).sum(axis=0)
+    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    opening_vec = np.asarray(opening_costs, dtype=float).reshape(-1)
+
+    best_type = None
+    best_key = None
+    for bin_type, fits in enumerate(fits_mask):
+        if not fits:
+            continue
+        size = float(sizes[bin_type])
+        key = (-size, opening_vec[bin_type], purchase_vec[bin_type], bin_type)
+        if best_key is None or key < best_key:
+            best_key = key
+            best_type = bin_type
+
+    if best_type is None:
+        raise ValueError(
+            f"Failed to choose a bin type for item type {item_type} using largest capacity rule."
+        )
+
+    return int(best_type)
