@@ -37,6 +37,7 @@ def _load_problem(npz_path: Path) -> ProblemInstance:
             "job_counts",
             "purchase_costs",
             "running_costs",
+            "resource_weights",
         ]
         missing = [key for key in required_keys if key not in data]
         if missing:
@@ -48,6 +49,7 @@ def _load_problem(npz_path: Path) -> ProblemInstance:
             job_counts=data["job_counts"],
             purchase_costs=data["purchase_costs"],
             running_costs=data["running_costs"],
+            resource_weights=data["resource_weights"],
         )
 
 

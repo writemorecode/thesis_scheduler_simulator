@@ -17,6 +17,7 @@ class ProblemInstance:
     job_counts: np.ndarray  # L shape: (J, T)
     purchase_costs: np.ndarray  # shape: (M,)
     running_costs: np.ndarray  # shape: (M,)
+    resource_weights: np.ndarray  # shape: (K,)
 
 
 def _validate_ratio(name: str, value: float) -> None:
@@ -177,14 +178,18 @@ def _generate_job_counts(
 
 def _compute_costs(
     capacities: np.ndarray,
-    alpha: np.ndarray | None,
+    resource_weights: np.ndarray | None,
     gamma: float | None,
     rng: np.random.Generator,
-) -> tuple[np.ndarray, np.ndarray]:
-    alpha_vector = alpha if alpha is not None else rng.random(capacities.shape[0])
-    purchase_costs = capacities.T @ alpha_vector
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    weights = (
+        resource_weights
+        if resource_weights is not None
+        else rng.random(capacities.shape[0])
+    )
+    purchase_costs = capacities.T @ weights
     running_costs = gamma * purchase_costs
-    return purchase_costs, running_costs
+    return purchase_costs, running_costs, weights
 
 
 def generate_random_instance(
@@ -206,7 +211,7 @@ def generate_random_instance(
     slot_focus_ratio: float = 0.6,
     slot_specialization_correlation: float = 0.7,
     slot_focus_multiplier: tuple[int, int] = (5, 8),
-    alpha: np.ndarray | None = None,
+    resource_weights: np.ndarray | None = None,
     gamma: float | None = 0.10,
     rng: np.random.Generator | None = None,
     seed: int | None = None,
@@ -242,7 +247,7 @@ def generate_random_instance(
         job specialization histogram (1.0 follows jobs exactly, 0.0 is uniform over resources).
     slot_focus_multiplier: low/high integer multiplier to boost job types matching a slot's primary
         resource.
-    alpha: optional resource cost weight vector (K,). Randomly sampled if None.
+    resource_weights: optional resource cost weight vector (K,). Randomly sampled if None.
     gamma: running-cost factor applied to purchase costs.
     rng/seed: random generator or seed used for reproducibility.
     """
@@ -346,9 +351,9 @@ def generate_random_instance(
         rng=rng,
     )
 
-    purchase_costs, running_costs = _compute_costs(
+    purchase_costs, running_costs, resource_weights_used = _compute_costs(
         capacities=capacities,
-        alpha=alpha,
+        resource_weights=resource_weights,
         gamma=gamma,
         rng=rng,
     )
@@ -359,6 +364,7 @@ def generate_random_instance(
         job_counts=job_counts,
         purchase_costs=purchase_costs,
         running_costs=running_costs,
+        resource_weights=resource_weights_used,
     )
 
 
@@ -419,6 +425,7 @@ def generate_dataset(
             job_counts=instance.job_counts,
             purchase_costs=instance.purchase_costs,
             running_costs=instance.running_costs,
+            resource_weights=instance.resource_weights,
             K=K,
             J=J,
             M=M,
