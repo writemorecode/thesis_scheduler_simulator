@@ -12,6 +12,7 @@ import numpy as np
 from algorithms import ScheduleResult, ffd_schedule
 from problem_generation import ProblemInstance
 from ruin_recreate import ruin_recreate_schedule
+from simple_scheduler import simple_scheduler
 
 
 @dataclass
@@ -101,8 +102,11 @@ def _build_scheduler(
 
         return _ffd
 
+    if normalized in {"simple"}:
+        return lambda problem: simple_scheduler(problem, max_iterations=iterations)
+
     raise ValueError(
-        f"Unknown scheduler '{name}'. Expected one of: ruin_recreate, ffd."
+        f"Unknown scheduler '{name}'. Expected one of: ruin_recreate, ffd, simple_scheduler."
     )
 
 
