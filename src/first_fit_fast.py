@@ -68,7 +68,7 @@ def _allocate_first_fit(capacity_per_bin: np.ndarray, total_items: int) -> np.nd
 def first_fit_vectorized(
     C: np.ndarray,
     R: np.ndarray,
-    l: np.ndarray,
+    load: np.ndarray,
 ):
     """
     Vectorized multidimensional first-fit for heterogeneous bins.
@@ -98,7 +98,7 @@ def first_fit_vectorized(
 
     C = np.asarray(C, dtype=np.int64)
     R = np.asarray(R, dtype=np.int64)
-    l = np.asarray(l, dtype=np.int64).reshape(-1)
+    load = np.asarray(load, dtype=np.int64).reshape(-1)
 
     if C.ndim != 2 or R.ndim != 2:
         raise ValueError("C and R must be 2D matrices.")
@@ -109,9 +109,9 @@ def first_fit_vectorized(
         raise ValueError(
             f"Bin and item matrices must share the same number of rows; got {K} and {K_items}."
         )
-    if l.size != J:
-        raise ValueError(f"l must have length {J}, got {l.size}.")
-    if np.any(C < 0) or np.any(R < 0) or np.any(l < 0):
+    if load.size != J:
+        raise ValueError(f"l must have length {J}, got {load.size}.")
+    if np.any(C < 0) or np.any(R < 0) or np.any(load < 0):
         raise ValueError(
             "Capacities, requirements, and item counts must be non-negative."
         )
@@ -121,7 +121,7 @@ def first_fit_vectorized(
     B = np.zeros((J, 0), dtype=np.int64)
 
     for j in range(J):
-        count = int(l[j])
+        count = int(load[j])
         if count == 0:
             continue
 

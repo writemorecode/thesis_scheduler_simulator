@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -39,9 +39,9 @@ class TimeSlotSolution:
     """Packing state for a single time slot."""
 
     machine_counts: np.ndarray  # vector z_t
-    bins: List[BinInfo]
+    bins: list[BinInfo]
 
-    def copy(self) -> "TimeSlotSolution":
+    def copy(self) -> TimeSlotSolution:
         """Deep copy helper used before mutating a slot solution."""
 
         return TimeSlotSolution(
@@ -64,7 +64,7 @@ class ScheduleResult:
 
     total_cost: float
     machine_vector: np.ndarray
-    time_slot_solutions: List[TimeSlotSolution]
+    time_slot_solutions: list[TimeSlotSolution]
     purchased_baseline: np.ndarray | None = None
 
     def validate(
@@ -402,7 +402,7 @@ def build_time_slot_solution(
 ) -> TimeSlotSolution:
     """Construct a time-slot solution from a raw bin list."""
 
-    active_bins: List[BinInfo] = []
+    active_bins: list[BinInfo] = []
     for bin_info in bins:
         if int(np.sum(bin_info.item_counts)) == 0:
             continue
@@ -467,7 +467,7 @@ def ffd_schedule(
 
     initial_purchased = np.zeros(M, dtype=int)
 
-    time_slot_solutions: List[TimeSlotSolution] = []
+    time_slot_solutions: list[TimeSlotSolution] = []
     machine_vector = np.zeros(M, dtype=int)
     total_cost = 0.0
 
@@ -501,7 +501,7 @@ def ffd_schedule(
 
 
 def _sort_bins_by_utilization(
-    bins: List[BinInfo],
+    bins: list[BinInfo],
     requirements: np.ndarray,
     running_costs: np.ndarray | None = None,
 ) -> None:
@@ -514,7 +514,7 @@ def _sort_bins_by_utilization(
     if running_costs is not None:
         cost_vector = np.asarray(running_costs, dtype=float).reshape(-1)
 
-    def _sort_key(bin_info: BinInfo) -> Tuple[float, float]:
+    def _sort_key(bin_info: BinInfo) -> tuple[float, float]:
         cost_component = (
             -float(cost_vector[bin_info.bin_type]) if cost_vector is not None else 0.0
         )
@@ -523,10 +523,10 @@ def _sort_bins_by_utilization(
     bins.sort(key=_sort_key)
 
 
-def _sorted_jobs_for_bin(bin_info: BinInfo, requirements: np.ndarray) -> List[int]:
+def _sorted_jobs_for_bin(bin_info: BinInfo, requirements: np.ndarray) -> list[int]:
     """Return a non-increasing ordering of job indices contained in a bin."""
 
-    jobs: List[int] = []
+    jobs: list[int] = []
     for job_type, count in enumerate(bin_info.item_counts):
         jobs.extend([job_type] * int(count))
 
@@ -626,7 +626,7 @@ def repack_jobs(
             "running_costs length must match the number of machine types in capacities."
         )
 
-    bins: List[BinInfo] = [
+    bins: list[BinInfo] = [
         BinInfo(
             bin_type=b.bin_type,
             capacity=b.capacity.copy(),

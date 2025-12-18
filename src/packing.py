@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Callable, List, Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 
@@ -54,7 +54,7 @@ class BinPackingResult:
     """Container for the packing outcome."""
 
     total_cost: float
-    bins: List[BinInfo]
+    bins: list[BinInfo]
 
     def __str__(self):
         cost_text = f"Total cost: {self.total_cost}"
@@ -253,7 +253,7 @@ def first_fit(
     open_counts = opened_bins_vec.copy()
     preopened_extra = np.maximum(open_counts - initial_purchased, 0)
 
-    bins: List[BinInfo] = []
+    bins: list[BinInfo] = []
     total_cost = float(np.dot(open_counts, opening_costs))
     if np.any(preopened_extra):
         total_cost += float(np.dot(preopened_extra, purchase_costs))
@@ -418,7 +418,7 @@ def first_fit_largest(
     open_counts = opened_bins_vec.copy()
     preopened_extra = np.maximum(open_counts - initial_purchased, 0)
 
-    bins: List[BinInfo] = []
+    bins: list[BinInfo] = []
     total_cost = float(np.dot(open_counts, opening_costs))
     if np.any(preopened_extra):
         total_cost += float(np.dot(preopened_extra, purchase_costs))

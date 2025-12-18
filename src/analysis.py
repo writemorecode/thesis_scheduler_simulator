@@ -1,0 +1,218 @@
+"""
+Analysis utilities for comparing algorithm performance results.
+
+Loads the per-algorithm CSVs from ``results_eval/``, joins them on ``filename``,
+computes pairwise log-ratios of ``total_cost``, and aggregates summary statistics.
+Designed for quick CLI use:
+
+    python -m src.analysis --results-dir results_eval
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from math import sqrt
+from pathlib import Path
+from statistics import NormalDist
+import warnings
+from collections.abc import Iterable
+
+import polars as pl
+import numpy as np
+
+
+# Default mapping of algorithm identifiers to their CSV filenames.
+DEFAULT_ALG_FILES = {
+    "ffd": "eval1_ffd.csv",
+    "simple_scheduler": "eval1_simple.csv",
+    # "ruin_recreate": "eval1_rr.csv",
+}
+
+
+@dataclass(frozen=True)
+class AlgorithmData:
+    name: str
+    path: Path
+    df: pl.DataFrame
+
+
+def _t_critical(df: int, confidence: float = 0.95) -> float:
+    """Return the two-tailed critical t value; fall back to normal if SciPy missing."""
+    if df <= 0:
+        raise ValueError("Degrees of freedom must be positive for t critical value")
+    alpha = 1.0 - confidence
+    prob = 1.0 - alpha / 2.0
+    try:
+        from scipy import stats  # type: ignore
+
+        return float(stats.t.ppf(prob, df))
+    except Exception:
+        # Normal approximation as a fallback when SciPy is unavailable.
+        warnings.warn(
+            "SciPy is not installed; using normal approximation for t critical value.",
+            RuntimeWarning,
+        )
+        return float(NormalDist().inv_cdf(prob))
+
+
+def load_algorithm_results(
+    results_dir: Path, mapping: dict[str, str]
+) -> list[AlgorithmData]:
+    """Read each algorithm CSV."""
+    data: list[AlgorithmData] = []
+    for algo, filename in mapping.items():
+        path = (results_dir / filename).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"Missing results file for {algo}: {path}")
+        df = (
+            pl.read_csv(path)
+            .select(
+                "filename",
+                pl.col("total_cost").alias(f"total_cost_{algo}"),
+            )
+            .group_by("filename")
+            .agg(pl.col(f"total_cost_{algo}").min())
+        )
+        data.append(AlgorithmData(name=algo, path=path, df=df))
+    return data
+
+
+def join_on_filename(datasets: Iterable[AlgorithmData]) -> pl.DataFrame:
+    """Inner-join all algorithm result frames on filename."""
+    iterator = iter(datasets)
+    try:
+        base = next(iterator).df
+    except StopIteration:
+        raise ValueError("No datasets provided for join") from None
+
+    joined = base
+    for algo in iterator:
+        joined = joined.join(algo.df, on="filename", how="inner")
+    return joined
+
+
+def add_log_ratio_columns(
+    df: pl.DataFrame, algos: Iterable[str]
+) -> tuple[pl.DataFrame, list[str]]:
+    """Add pairwise log(total_cost ratios) for all ordered pairs of algorithms."""
+    # Ensure costs are valid for logarithms.
+    for algo in algos:
+        col = f"total_cost_{algo}"
+        min_val = df[col].min()  # type: ignore[index]
+        if min_val is None or min_val <= 0:
+            raise ValueError(
+                f"total_cost for {algo} contains non-positive values; cannot take log ratios"
+            )
+
+    names = list(algos)
+    log_ratio_columns: list[str] = []
+    result = df
+    for num in names:
+        for den in names:
+            if num == den:
+                continue
+            numerator = f"total_cost_{num}"
+            denominator = f"total_cost_{den}"
+            ratio_name = f"log_ratio_{num}_over_{den}"
+            result = result.with_columns(
+                
+                    (pl.col(numerator).log() - pl.col(denominator).log()).alias(
+                        ratio_name
+                    )
+                
+            )
+            log_ratio_columns.append(ratio_name)
+    return result, log_ratio_columns
+
+
+def summarize_ratios(df: pl.DataFrame, ratio_columns: Iterable[str]) -> pl.DataFrame:
+    """Compute summary statistics and 95% paired t CIs for each log-ratio column."""
+    summaries = []
+    for col in ratio_columns:
+        series = df[col]
+        count = series.len()
+        mean = series.mean()
+        median = series.median()
+        std = series.std()
+        min_val = series.min()
+        max_val = series.max()
+        ci_low = ci_high = None
+        if mean is not None and std is not None and count >= 2:
+            se = std / sqrt(count)
+            t_crit = _t_critical(count - 1, confidence=0.95)
+            half_width = t_crit * se
+            ci_low = np.exp(mean - half_width)
+            ci_high = np.exp(mean + half_width)
+        summaries.append(
+            {
+                "ratio": col,
+                "count": count,
+                "mean": mean,
+                "median": median,
+                "std": std,
+                "min": min_val,
+                "max": max_val,
+                "ci_low_95": ci_low,
+                "ci_high_95": ci_high,
+            }
+        )
+    return pl.DataFrame(summaries)
+
+
+def run_analysis(
+    results_dir: Path = Path("results_eval"),
+    mapping: dict[str, str] | None = None,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Load results, compute log-ratios, and return (joined_df, summary_df)."""
+    mapping = mapping or DEFAULT_ALG_FILES
+    data = load_algorithm_results(results_dir, mapping)
+    joined = join_on_filename(data)
+    joined_with_log_ratios, log_ratio_cols = add_log_ratio_columns(
+        joined, mapping.keys()
+    )
+    summary = summarize_ratios(joined_with_log_ratios, log_ratio_cols)
+    return joined_with_log_ratios, summary
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Analyze algorithm total_cost log-ratios."
+    )
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=Path("results_eval"),
+        help="Directory containing per-algorithm CSVs.",
+    )
+    parser.add_argument(
+        "--export-joined",
+        type=Path,
+        help="Optional path to write the joined data with log-ratio columns as CSV.",
+    )
+    parser.add_argument(
+        "--export-summary",
+        type=Path,
+        help="Optional path to write the log-ratio summary statistics as CSV.",
+    )
+    args = parser.parse_args()
+
+    joined, summary = run_analysis(args.results_dir)
+
+    print("\nJoined data sample (first 5 rows):")
+    print(joined.head())
+
+    print("\nLog-ratio summaries:")
+    print(summary.sort("ratio"))
+
+    if args.export_joined:
+        joined.write_csv(args.export_joined)
+        print(f"\nWrote joined data to {args.export_joined}")
+    if args.export_summary:
+        summary.write_csv(args.export_summary)
+        print(f"Wrote summary to {args.export_summary}")
+
+
+if __name__ == "__main__":
+    main()

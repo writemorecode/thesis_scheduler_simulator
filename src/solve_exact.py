@@ -28,7 +28,7 @@ class ILPModelData:
 
 def build_exact_ilp(
     problem: ProblemInstance,
-) -> "ILPModelData":
+) -> ILPModelData:
     """
     Build the ILP model for the scheduling/packing problem.
 
