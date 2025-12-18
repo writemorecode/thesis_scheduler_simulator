@@ -94,13 +94,7 @@ def _build_scheduler(
     if normalized in {"ffd", "first_fit_decreasing"}:
 
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(
-                C=problem.capacities,
-                R=problem.requirements,
-                L=problem.job_counts,
-                purchase_costs=problem.purchase_costs,
-                running_costs=problem.running_costs,
-            )
+            return ffd_schedule(problem)
 
         return _ffd
 

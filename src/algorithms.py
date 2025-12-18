@@ -421,19 +421,14 @@ def build_time_slot_solution(
     return TimeSlotSolution(machine_counts=machine_counts, bins=active_bins)
 
 
-def ffd_schedule(
-    C: np.ndarray,
-    R: np.ndarray,
-    L: np.ndarray,
-    purchase_costs: np.ndarray,
-    running_costs: np.ndarray,
-) -> ScheduleResult:
+def ffd_schedule(problem: ProblemInstance) -> ScheduleResult:
     """
     Build a multi-slot schedule by running FFD independently per slot.
 
-    Parameters mirror the packing notation: ``C`` is the ``(K, M)`` capacity
-    matrix, ``R`` is the ``(K, J)`` requirement matrix, and ``L`` is either a
-    ``(T, J)`` matrix of per-slot job counts or a length-``J`` vector. Costs are
+    Uses the packing notation fields from ``ProblemInstance``:
+    ``capacities`` is the ``(K, M)`` capacity matrix, ``requirements`` is the
+    ``(K, J)`` requirement matrix, and ``job_counts`` is either a ``(T, J)``
+    matrix of per-slot job counts or a length-``J`` vector. Costs are
     length-``M`` vectors for purchasing and running machine types.
 
     ``purchased_bins`` is an optional length-``M`` vector describing how many
@@ -441,11 +436,11 @@ def ffd_schedule(
     and updated as additional purchases are needed while scheduling.
     """
 
-    C = np.asarray(C, dtype=float)
-    R = np.asarray(R, dtype=float)
-    L = np.asarray(L, dtype=int)
-    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
-    running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
+    C = np.asarray(problem.capacities, dtype=float)
+    R = np.asarray(problem.requirements, dtype=float)
+    L = np.asarray(problem.job_counts, dtype=int)
+    purchase_vec = np.asarray(problem.purchase_costs, dtype=float).reshape(-1)
+    running_vec = np.asarray(problem.running_costs, dtype=float).reshape(-1)
 
     if C.ndim != 2 or R.ndim != 2:
         raise ValueError("C and R must be 2D matrices.")

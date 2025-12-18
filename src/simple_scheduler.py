@@ -41,13 +41,7 @@ def simple_scheduler(
         raise ValueError("Cost vectors must have one entry per machine type.")
 
     # 1. Compute initial solution
-    x_0 = ffd_schedule(
-        C=C,
-        R=R,
-        L=L,
-        purchase_costs=c_p,
-        running_costs=c_r,
-    )
+    x_0 = ffd_schedule(problem)
     x = x_0
     x_best = x_0
     iterations_since_improvement = 0
