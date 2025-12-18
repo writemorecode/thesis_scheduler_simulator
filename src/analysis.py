@@ -10,16 +10,15 @@ Designed for quick CLI use:
 
 from __future__ import annotations
 
+import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import sqrt
 from pathlib import Path
 from statistics import NormalDist
-import warnings
-from collections.abc import Iterable
 
-import polars as pl
 import numpy as np
-
+import polars as pl
 
 # Default mapping of algorithm identifiers to their CSV filenames.
 DEFAULT_ALG_FILES = {
@@ -51,6 +50,7 @@ def _t_critical(df: int, confidence: float = 0.95) -> float:
         warnings.warn(
             "SciPy is not installed; using normal approximation for t critical value.",
             RuntimeWarning,
+            stacklevel=2,
         )
         return float(NormalDist().inv_cdf(prob))
 
@@ -115,11 +115,7 @@ def add_log_ratio_columns(
             denominator = f"total_cost_{den}"
             ratio_name = f"log_ratio_{num}_over_{den}"
             result = result.with_columns(
-                
-                    (pl.col(numerator).log() - pl.col(denominator).log()).alias(
-                        ratio_name
-                    )
-                
+                (pl.col(numerator).log() - pl.col(denominator).log()).alias(ratio_name)
             )
             log_ratio_columns.append(ratio_name)
     return result, log_ratio_columns

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import numpy as np
 
 from algorithms import (
@@ -8,7 +7,6 @@ from algorithms import (
     ffd_schedule,
     repack_schedule,
 )
-
 from problem_generation import ProblemInstance
 
 

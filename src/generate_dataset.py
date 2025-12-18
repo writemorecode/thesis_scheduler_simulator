@@ -1,6 +1,9 @@
 from __future__ import annotations
+
 import argparse
+
 import numpy as np
+
 from problem_generation import generate_dataset
 
 

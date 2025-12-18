@@ -9,13 +9,12 @@ from algorithms import (
     BinInfo,
     ScheduleResult,
     TimeSlotSolution,
-    build_time_slot_solution,
     _machine_counts_from_bins,
     _sort_bins_by_utilization,
+    build_time_slot_solution,
     ffd_schedule,
     repack_schedule,
 )
-
 from packing import first_fit_decreasing
 from problem_generation import ProblemInstance
 

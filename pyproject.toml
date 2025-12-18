@@ -13,8 +13,11 @@ dependencies = [
 ]
 
 [tool.ruff.lint]
-extend-select = [
-  "UP",  # pyupgrade
+select = [
+    "B",
+    "F",
+    "I",
+    "UP",
 ]
 
 

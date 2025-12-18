@@ -3,18 +3,17 @@ from __future__ import annotations
 import argparse
 import time
 from collections.abc import Callable
-
 from pathlib import Path
 
 import numpy as np
 
 from algorithms import ScheduleResult
-from ruin_recreate import ruin_recreate_schedule
 from problem_generation import (
     ProblemInstance,
     generate_dataset,
     generate_random_instance,
 )
+from ruin_recreate import ruin_recreate_schedule
 
 
 def run_scheduler(

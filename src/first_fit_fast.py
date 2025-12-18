@@ -105,7 +105,7 @@ def first_fit_vectorized(
 
     K, M = C.shape
     K_items, J = R.shape
-    if K != K_items:
+    if K_items != K:
         raise ValueError(
             f"Bin and item matrices must share the same number of rows; got {K} and {K_items}."
         )
@@ -129,7 +129,7 @@ def first_fit_vectorized(
         existing_capacity = _max_items_per_bin(remaining, demand)
         total_existing_capacity = int(existing_capacity.sum())
 
-        feasible_types = np.all(C >= demand[:, None], axis=0)
+        feasible_types = np.all(demand[:, None] <= C, axis=0)
         if not np.any(feasible_types):
             raise ValueError(f"Item type {j} does not fit in any bin type.")
 

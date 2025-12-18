@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 
+from packing import BinInfo as _BaseBinInfo
+from packing import BinSelectionFn, first_fit_decreasing
 from problem_generation import ProblemInstance
-from packing import BinInfo as _BaseBinInfo, BinSelectionFn, first_fit_decreasing
 
 
 class BinInfo(_BaseBinInfo):
@@ -139,7 +140,7 @@ class ScheduleResult:
         expected_machine_vector = np.zeros(M, dtype=int)
 
         for slot_idx, (slot, required_jobs) in enumerate(
-            zip(self.time_slot_solutions, job_matrix)
+            zip(self.time_slot_solutions, job_matrix, strict=False)
         ):
             machine_counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
             if machine_counts.shape[0] != M:

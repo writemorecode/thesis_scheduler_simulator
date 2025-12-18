@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass, field
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -218,7 +218,7 @@ def first_fit(
     K, M = C.shape
     K_items, J = R.shape
 
-    if K != K_items:
+    if K_items != K:
         raise ValueError(
             f"Bin and item matrices must have the same number of rows (dimensions). Got {K} and {K_items}."
         )
@@ -385,7 +385,7 @@ def first_fit_largest(
     K, M = C.shape
     K_items, J = R.shape
 
-    if K != K_items:
+    if K_items != K:
         raise ValueError(
             f"Bin and item matrices must have the same number of rows (dimensions). Got {K} and {K_items}."
         )
