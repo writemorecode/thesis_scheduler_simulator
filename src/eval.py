@@ -138,6 +138,7 @@ def evaluate_dataset(
     seed: int | None,
     output_csv: Path,
     validate: bool,
+    verbose: bool,
 ) -> list[dict[str, object]]:
     rng = np.random.default_rng(seed)
     scheduler_fn = _build_scheduler(scheduler_name, iterations=iterations, rng=rng)
@@ -160,10 +161,11 @@ def evaluate_dataset(
             "machine_vector": " ".join(map(str, result.machine_vector.tolist())),
         }
         rows.append(row)
-        print(
-            f"{result.filename}: cost={result.total_cost:.4f}, "
-            f"machines={result.machine_vector}, runtime={result.runtime_sec:.3f}s"
-        )
+        if verbose:
+            print(
+                f"{result.filename}: cost={result.total_cost:.4f}, "
+                f"machines={result.machine_vector}, runtime={result.runtime_sec:.3f}s"
+            )
 
     if rows:
         with output_csv.open("w", newline="") as handle:
@@ -251,6 +253,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Validate each schedule after solving (default: off).",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print per-instance results (default: off).",
+    )
     return parser.parse_args()
 
 
@@ -264,6 +271,7 @@ def main() -> None:
         seed=args.seed,
         output_csv=args.output,
         validate=args.validate,
+        verbose=args.verbose,
     )
     _print_summary(rows)
 
