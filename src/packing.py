@@ -258,37 +258,76 @@ def first_fit(
     if np.any(preopened_extra):
         total_cost += float(np.dot(preopened_extra, purchase_costs))
 
-    def _create_bin(bin_type: int) -> BinInfo:
-        capacity = C[:, [bin_type]].copy()
-        bin_info = BinInfo(
-            bin_type=bin_type,
-            capacity=capacity.copy(),
-            remaining_capacity=capacity.copy(),
-            item_counts=np.zeros(J, dtype=int),
-        )
-        bins.append(bin_info)
-        return bin_info
-
-    for bin_type, count in enumerate(open_counts):
-        for _ in range(int(count)):
-            _create_bin(bin_type)
+    bin_types = np.repeat(np.arange(M, dtype=int), open_counts)
+    if bin_types.size:
+        remaining = C[:, bin_types].copy()
+    else:
+        remaining = np.zeros((K, 0), dtype=float)
+    B = np.zeros((J, bin_types.size), dtype=int)
 
     for j in range(J):
-        demand = R[:, [j]]
+        count = int(L[j])
+        if count == 0:
+            continue
 
-        for _ in range(int(L[j])):
-            placed = False
-            for bin_info in bins:
-                if np.all(bin_info.remaining_capacity >= demand):
-                    bin_info.remaining_capacity -= demand
-                    bin_info.item_counts[j] += 1
-                    bin_info.update_utilization_cache()
-                    placed = True
-                    break
+        demand_vec = R[:, j].astype(float, copy=False)
+        demand = demand_vec.reshape(-1, 1)
 
-            if placed:
-                continue
+        if np.all(demand_vec == 0):
+            if remaining.shape[1] == 0:
+                bin_type, requires_purchase = _select_bin_type_marginal_cost(
+                    j,
+                    demand,
+                    C,
+                    purchase_costs,
+                    opening_costs,
+                    purchased_counts,
+                    open_counts,
+                )
+                incremental_cost = (
+                    float(opening_costs[bin_type])
+                    if not requires_purchase
+                    else float(purchase_costs[bin_type] + opening_costs[bin_type])
+                )
+                total_cost += incremental_cost
+                open_counts[bin_type] += 1
+                if open_counts[bin_type] > purchased_counts[bin_type]:
+                    purchased_counts[bin_type] = open_counts[bin_type]
 
+                bin_types = np.append(bin_types, bin_type)
+                remaining = np.hstack((remaining, C[:, [bin_type]].copy()))
+                B = np.hstack((B, np.zeros((J, 1), dtype=int)))
+
+            B[j, 0] += count
+            continue
+
+        if remaining.shape[1]:
+            positive = demand_vec > 0
+            ratios = remaining[positive, :] / demand_vec[positive, None]
+            max_add = np.floor(np.min(ratios, axis=0) + 1e-12).astype(int)
+            max_add = np.maximum(max_add, 0)
+
+            if max_add.size:
+                prefix_before = np.cumsum(max_add) - max_add
+                placed = np.clip(count - prefix_before, 0, max_add)
+                placed = placed.astype(int)
+                if np.any(placed):
+                    remaining -= demand * placed[None, :]
+                    B[j, :] += placed
+                placed_total = int(np.sum(placed))
+            else:
+                placed_total = 0
+        else:
+            placed_total = 0
+
+        remaining_items = count - placed_total
+        if remaining_items <= 0:
+            continue
+
+        new_bin_types: list[int] = []
+        new_bin_counts: list[int] = []
+
+        while remaining_items > 0:
             bin_type, requires_purchase = _select_bin_type_marginal_cost(
                 j,
                 demand,
@@ -309,10 +348,42 @@ def first_fit(
             if open_counts[bin_type] > purchased_counts[bin_type]:
                 purchased_counts[bin_type] = open_counts[bin_type]
 
-            bin_info = _create_bin(bin_type)
-            bin_info.remaining_capacity -= demand
-            bin_info.item_counts[j] += 1
-            bin_info.update_utilization_cache()
+            capacity_vec = C[:, bin_type]
+            positive = demand_vec > 0
+            if np.any(positive):
+                ratios = capacity_vec[positive] / demand_vec[positive]
+                max_fit = int(np.floor(np.min(ratios) + 1e-12))
+            else:
+                max_fit = remaining_items
+            if max_fit <= 0:
+                max_fit = 1
+
+            placed_here = min(remaining_items, max_fit)
+            remaining_items -= placed_here
+            new_bin_types.append(bin_type)
+            new_bin_counts.append(placed_here)
+
+        new_bin_types_arr = np.asarray(new_bin_types, dtype=int)
+        new_counts_arr = np.asarray(new_bin_counts, dtype=int)
+        new_remaining = C[:, new_bin_types_arr].copy()
+        new_remaining -= demand * new_counts_arr[None, :]
+
+        remaining = np.hstack((remaining, new_remaining))
+        bin_types = np.concatenate((bin_types, new_bin_types_arr))
+
+        new_B = np.zeros((J, new_counts_arr.size), dtype=int)
+        new_B[j, :] = new_counts_arr
+        B = np.hstack((B, new_B))
+
+    for i, bin_type in enumerate(bin_types.tolist()):
+        capacity = C[:, [bin_type]].copy()
+        bin_info = BinInfo(
+            bin_type=int(bin_type),
+            capacity=capacity.copy(),
+            remaining_capacity=remaining[:, [i]].copy(),
+            item_counts=B[:, i].copy(),
+        )
+        bins.append(bin_info)
 
     return BinPackingResult(total_cost=total_cost, bins=bins)
 
