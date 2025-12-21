@@ -519,6 +519,13 @@ def _sort_bins_by_utilization(
     bins.sort(key=_sort_key)
 
 
+def _refresh_bin_utilization(bins: Sequence[BinInfo]) -> None:
+    """Refresh utilization caches for a collection of bins."""
+
+    for bin_info in bins:
+        bin_info.update_utilization_cache()
+
+
 def _sorted_jobs_for_bin(bin_info: BinInfo, requirements: np.ndarray) -> list[int]:
     """Return a non-increasing ordering of job indices contained in a bin."""
 
@@ -632,6 +639,7 @@ def repack_jobs(
         for b in slot_solution.bins
     ]
 
+    _refresh_bin_utilization(bins)
     _sort_bins_by_utilization(bins, requirements, running_costs)
 
     while True:
@@ -707,6 +715,7 @@ def repack_schedule(
             requirements=requirements,
             running_costs=running_costs,
         )
+        _refresh_bin_utilization(repacked_slot.bins)
         repacked_slots.append(repacked_slot)
 
     purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)

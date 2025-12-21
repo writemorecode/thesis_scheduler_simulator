@@ -518,7 +518,6 @@ def first_fit_largest(
                 if np.all(bin_info.remaining_capacity >= demand):
                     bin_info.remaining_capacity -= demand
                     bin_info.item_counts[j] += 1
-                    bin_info.update_utilization_cache()
                     placed = True
                     break
 
@@ -543,7 +542,6 @@ def first_fit_largest(
             bin_info = _create_bin(bin_type)
             bin_info.remaining_capacity -= demand
             bin_info.item_counts[j] += 1
-            bin_info.update_utilization_cache()
 
     return BinPackingResult(total_cost=total_cost, bins=bins)
 
