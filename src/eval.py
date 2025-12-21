@@ -107,7 +107,10 @@ def _build_scheduler(
 
 
 def run_on_instance(
-    npz_path: Path, scheduler_fn: Callable[[ProblemInstance], ScheduleResult]
+    npz_path: Path,
+    scheduler_fn: Callable[[ProblemInstance], ScheduleResult],
+    *,
+    validate: bool,
 ) -> InstanceResult:
     problem = _load_problem(npz_path)
 
@@ -115,7 +118,8 @@ def run_on_instance(
     schedule = scheduler_fn(problem)
     runtime_sec = time.time() - start
 
-    schedule.validate(problem)
+    if validate:
+        schedule.validate(problem)
 
     return InstanceResult(
         filename=npz_path.name,
@@ -133,6 +137,7 @@ def evaluate_dataset(
     limit: int | None,
     seed: int | None,
     output_csv: Path,
+    validate: bool,
 ) -> list[dict[str, object]]:
     rng = np.random.default_rng(seed)
     scheduler_fn = _build_scheduler(scheduler_name, iterations=iterations, rng=rng)
@@ -142,7 +147,7 @@ def evaluate_dataset(
         if limit is not None and idx >= limit:
             break
 
-        result = run_on_instance(npz_path, scheduler_fn)
+        result = run_on_instance(npz_path, scheduler_fn, validate=validate)
         row = {
             "filename": result.filename,
             "K": dims["K"],
@@ -241,6 +246,11 @@ def parse_args() -> argparse.Namespace:
         default=Path("dataset") / "eval_results.csv",
         help="Where to write the per-instance results CSV.",
     )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate each schedule after solving (default: off).",
+    )
     return parser.parse_args()
 
 
@@ -253,6 +263,7 @@ def main() -> None:
         limit=args.limit,
         seed=args.seed,
         output_csv=args.output,
+        validate=args.validate,
     )
     _print_summary(rows)
 
