@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from algorithms import ScheduleResult, ffd_schedule
+from packing import BinTypeSelectionMethod
 from problem_generation import ProblemInstance
 from ruin_recreate import ruin_recreate_schedule
 from simple_scheduler import simple_scheduler
@@ -94,7 +95,14 @@ def _build_scheduler(
     if normalized in {"ffd", "first_fit_decreasing"}:
 
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(problem)
+            return ffd_schedule(problem, BinTypeSelectionMethod.MARGINAL_COST)
+
+        return _ffd
+
+    if normalized in {"ffdl", "first_fit_decreasing_largest"}:
+
+        def _ffd(problem: ProblemInstance) -> ScheduleResult:
+            return ffd_schedule(problem, BinTypeSelectionMethod.LARGEST)
 
         return _ffd
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from packing import BinInfo as _BaseBinInfo
-from packing import BinSelectionFn, first_fit_decreasing
+from packing import BinSelectionFn, BinTypeSelectionMethod, first_fit_decreasing
 from problem_generation import ProblemInstance
 
 
@@ -421,7 +421,9 @@ def build_time_slot_solution(
     return TimeSlotSolution(machine_counts=machine_counts, bins=active_bins)
 
 
-def ffd_schedule(problem: ProblemInstance) -> ScheduleResult:
+def ffd_schedule(
+    problem: ProblemInstance, bin_selection_method: BinTypeSelectionMethod
+) -> ScheduleResult:
     """
     Build a multi-slot schedule by running FFD independently per slot.
 
@@ -480,6 +482,7 @@ def ffd_schedule(problem: ProblemInstance) -> ScheduleResult:
                 opening_costs=running_vec,
                 L=slot_jobs,
                 purchased_bins=initial_purchased,
+                selection_method=bin_selection_method,
             )
 
             slot_solution = build_time_slot_solution(ffd_result.bins, M, R, running_vec)

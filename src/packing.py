@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 
 import numpy as np
 
@@ -66,6 +67,11 @@ class BinPackingResult:
 
 
 BinSelectionFn = Callable[[int, np.ndarray], int]
+
+
+class BinTypeSelectionMethod(Enum):
+    MARGINAL_COST = "marginal cost"
+    LARGEST = "largest"
 
 
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
@@ -168,12 +174,44 @@ def _select_bin_type_marginal_cost(
     return best_type, best_requires_purchase
 
 
+def _select_bin_type(
+    selection_method: BinTypeSelectionMethod,
+    item_type: int,
+    demand: np.ndarray,
+    capacities: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    purchased_counts: np.ndarray,
+    open_counts: np.ndarray,
+) -> tuple[int, bool]:
+    if selection_method == BinTypeSelectionMethod.MARGINAL_COST:
+        return _select_bin_type_marginal_cost(
+            item_type,
+            demand,
+            capacities,
+            purchase_costs,
+            opening_costs,
+            purchased_counts,
+            open_counts,
+        )
+
+    if selection_method == BinTypeSelectionMethod.LARGEST:
+        bin_type = _select_bin_type_largest(
+            item_type, demand, capacities, purchase_costs, opening_costs
+        )
+        requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
+        return bin_type, requires_purchase
+
+    raise ValueError(f"Unknown bin selection method: {selection_method!r}")
+
+
 def first_fit(
     C: np.ndarray,
     R: np.ndarray,
     purchase_costs: np.ndarray,
     opening_costs: np.ndarray,
     L: np.ndarray,
+    selection_method: BinTypeSelectionMethod,
     opened_bins: np.ndarray | Sequence[int] | None = None,
     purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
@@ -192,13 +230,17 @@ def first_fit(
         Length M column vector with the opening cost for each bin type.
     L : np.ndarray
         Length J column vector with the number of items (per type) to pack.
+    selection_method : BinTypeSelectionMethod, optional
+        Determines how new bin types are selected when a new bin is needed.
+        Defaults to marginal cost.
     opened_bins : array-like of shape (M,), optional
         Pre-opened bin counts per type. These bins are available before packing starts
         and incur only the opening cost if they were already purchased.
     purchased_bins : array-like of shape (M,), optional
-        Bins already purchased but not necessarily opened. When provided, the marginal
-        cost rule will prefer reusing these machines (opening cost only) before buying
-        additional ones. This vector is updated in place when a new purchase occurs.
+        Bins already purchased but not necessarily opened. When provided and using the
+        marginal cost selection rule, the algorithm prefers reusing these machines
+        (opening cost only) before buying additional ones. This vector is updated in
+        place when a new purchase occurs.
 
     Returns
     -------
@@ -275,7 +317,8 @@ def first_fit(
 
         if np.all(demand_vec == 0):
             if remaining.shape[1] == 0:
-                bin_type, requires_purchase = _select_bin_type_marginal_cost(
+                bin_type, requires_purchase = _select_bin_type(
+                    selection_method,
                     j,
                     demand,
                     C,
@@ -328,7 +371,8 @@ def first_fit(
         new_bin_counts: list[int] = []
 
         while remaining_items > 0:
-            bin_type, requires_purchase = _select_bin_type_marginal_cost(
+            bin_type, requires_purchase = _select_bin_type(
+                selection_method,
                 j,
                 demand,
                 C,
@@ -394,6 +438,7 @@ def first_fit_decreasing(
     purchase_costs: np.ndarray,
     opening_costs: np.ndarray,
     L: np.ndarray,
+    selection_method: BinTypeSelectionMethod,
     opened_bins: np.ndarray | Sequence[int] | None = None,
     purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
@@ -405,8 +450,8 @@ def first_fit_decreasing(
     before smaller ones. The returned bin contents are mapped back to the original job
     ordering before being returned.
 
-    Parameters mirror :func:`first_fit`; ``opened_bins`` and ``purchased_bins`` are
-    forwarded directly without modification.
+    Parameters mirror :func:`first_fit`; ``opened_bins``, ``purchased_bins``, and
+    ``selection_method`` are forwarded directly without modification.
     """
 
     R_sorted, L_sorted, sorted_indices = _sort_items_decreasing(R, L)
@@ -420,6 +465,7 @@ def first_fit_decreasing(
         L_sorted,
         opened_bins=opened_bins,
         purchased_bins=purchased_bins,
+        selection_method=selection_method,
     )
 
     if J > 0:
@@ -442,108 +488,17 @@ def first_fit_largest(
 ) -> BinPackingResult:
     """
     First-fit packing that opens the largest feasible bin type when needed.
-
-    Existing bins are tried in insertion order. When no current bin fits an item,
-    the new bin type is chosen by maximum total capacity (tie broken by cost).
     """
-
-    C = np.asarray(C, dtype=float)
-    R = np.asarray(R, dtype=float)
-
-    if C.ndim != 2 or R.ndim != 2:
-        raise ValueError("C and R must be 2D matrices.")
-
-    K, M = C.shape
-    K_items, J = R.shape
-
-    if K_items != K:
-        raise ValueError(
-            f"Bin and item matrices must have the same number of rows (dimensions). Got {K} and {K_items}."
-        )
-
-    if not np.all(R >= 0):
-        raise ValueError("All job demand values must be non-negative")
-
-    purchase_costs = _prepare_vector(purchase_costs, M, "purchase_costs")
-    opening_costs = _prepare_vector(opening_costs, M, "opening_costs")
-    L = np.asarray(L, dtype=int).reshape(-1)
-    if L.shape[0] != J:
-        raise ValueError(f"L must have length {J}, got {L.shape[0]}.")
-    if np.any(L < 0):
-        raise ValueError("Job counts in L must be non-negative.")
-
-    opened_bins_vec = (
-        np.zeros(M, dtype=int)
-        if opened_bins is None
-        else _prepare_count_vector(opened_bins, M, "opened_bins")
+    return first_fit(
+        C,
+        R,
+        purchase_costs,
+        opening_costs,
+        L,
+        opened_bins=opened_bins,
+        purchased_bins=purchased_bins,
+        selection_method=BinTypeSelectionMethod.LARGEST,
     )
-
-    purchased_counts = (
-        np.zeros(M, dtype=int)
-        if purchased_bins is None
-        else _prepare_count_vector(purchased_bins, M, "purchased_bins")
-    )
-    initial_purchased = purchased_counts.copy()
-    purchased_counts[:] = np.maximum(purchased_counts, opened_bins_vec)
-
-    open_counts = opened_bins_vec.copy()
-    preopened_extra = np.maximum(open_counts - initial_purchased, 0)
-
-    bins: list[BinInfo] = []
-    total_cost = float(np.dot(open_counts, opening_costs))
-    if np.any(preopened_extra):
-        total_cost += float(np.dot(preopened_extra, purchase_costs))
-
-    def _create_bin(bin_type: int) -> BinInfo:
-        capacity = C[:, [bin_type]].copy()
-        bin_info = BinInfo(
-            bin_type=bin_type,
-            capacity=capacity.copy(),
-            remaining_capacity=capacity.copy(),
-            item_counts=np.zeros(J, dtype=int),
-        )
-        bins.append(bin_info)
-        return bin_info
-
-    for bin_type, count in enumerate(open_counts):
-        for _ in range(int(count)):
-            _create_bin(bin_type)
-
-    for j in range(J):
-        demand = R[:, [j]]
-
-        for _ in range(int(L[j])):
-            placed = False
-            for bin_info in bins:
-                if np.all(bin_info.remaining_capacity >= demand):
-                    bin_info.remaining_capacity -= demand
-                    bin_info.item_counts[j] += 1
-                    placed = True
-                    break
-
-            if placed:
-                continue
-
-            bin_type = _select_bin_type_largest(
-                j, demand, C, purchase_costs, opening_costs
-            )
-            requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
-
-            incremental_cost = (
-                float(opening_costs[bin_type])
-                if not requires_purchase
-                else float(purchase_costs[bin_type] + opening_costs[bin_type])
-            )
-            total_cost += incremental_cost
-            open_counts[bin_type] += 1
-            if open_counts[bin_type] > purchased_counts[bin_type]:
-                purchased_counts[bin_type] = open_counts[bin_type]
-
-            bin_info = _create_bin(bin_type)
-            bin_info.remaining_capacity -= demand
-            bin_info.item_counts[j] += 1
-
-    return BinPackingResult(total_cost=total_cost, bins=bins)
 
 
 def first_fit_decreasing_largest(
@@ -562,7 +517,7 @@ def first_fit_decreasing_largest(
     R_sorted, L_sorted, sorted_indices = _sort_items_decreasing(R, L)
     J = R_sorted.shape[1]
 
-    result = first_fit_largest(
+    result = first_fit_decreasing(
         C,
         R_sorted,
         purchase_costs,
@@ -570,6 +525,7 @@ def first_fit_decreasing_largest(
         L_sorted,
         opened_bins=opened_bins,
         purchased_bins=purchased_bins,
+        selection_method=BinTypeSelectionMethod.LARGEST,
     )
 
     if J > 0:
