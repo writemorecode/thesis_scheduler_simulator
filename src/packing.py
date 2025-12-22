@@ -323,35 +323,6 @@ def first_fit(
         demand_vec = R[:, j].astype(float, copy=False)
         demand = demand_vec.reshape(-1, 1)
 
-        if np.all(demand_vec == 0):
-            if remaining.shape[1] == 0:
-                bin_type, requires_purchase = _select_bin_type(
-                    selection_method,
-                    j,
-                    demand,
-                    C,
-                    purchase_costs,
-                    opening_costs,
-                    purchased_counts,
-                    open_counts,
-                )
-                incremental_cost = (
-                    float(opening_costs[bin_type])
-                    if not requires_purchase
-                    else float(purchase_costs[bin_type] + opening_costs[bin_type])
-                )
-                total_cost += incremental_cost
-                open_counts[bin_type] += 1
-                if open_counts[bin_type] > purchased_counts[bin_type]:
-                    purchased_counts[bin_type] = open_counts[bin_type]
-
-                bin_types = np.append(bin_types, bin_type)
-                remaining = np.hstack((remaining, C[:, [bin_type]].copy()))
-                B = np.hstack((B, np.zeros((J, 1), dtype=int)))
-
-            B[j, 0] += count
-            continue
-
         if remaining.shape[1]:
             positive = demand_vec > 0
             ratios = remaining[positive, :] / demand_vec[positive, None]
