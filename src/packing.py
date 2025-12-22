@@ -72,6 +72,7 @@ BinSelectionFn = Callable[[int, np.ndarray], int]
 class BinTypeSelectionMethod(Enum):
     MARGINAL_COST = "marginal cost"
     LARGEST = "largest"
+    SMALLEST = "smallest"
 
 
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
@@ -197,6 +198,13 @@ def _select_bin_type(
 
     if selection_method == BinTypeSelectionMethod.LARGEST:
         bin_type = _select_bin_type_largest(
+            item_type, demand, capacities, purchase_costs, opening_costs
+        )
+        requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
+        return bin_type, requires_purchase
+
+    if selection_method == BinTypeSelectionMethod.SMALLEST:
+        bin_type = _select_bin_type_smallest(
             item_type, demand, capacities, purchase_costs, opening_costs
         )
         requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
@@ -501,6 +509,30 @@ def first_fit_largest(
     )
 
 
+def first_fit_smallest(
+    C: np.ndarray,
+    R: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    L: np.ndarray,
+    opened_bins: np.ndarray | Sequence[int] | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
+) -> BinPackingResult:
+    """
+    First-fit packing that opens the smallest feasible bin type when needed.
+    """
+    return first_fit(
+        C,
+        R,
+        purchase_costs,
+        opening_costs,
+        L,
+        opened_bins=opened_bins,
+        purchased_bins=purchased_bins,
+        selection_method=BinTypeSelectionMethod.SMALLEST,
+    )
+
+
 def first_fit_decreasing_largest(
     C: np.ndarray,
     R: np.ndarray,
@@ -574,6 +606,48 @@ def _select_bin_type_largest(
     if best_type is None:
         raise ValueError(
             f"Failed to choose a bin type for item type {item_type} using largest capacity rule."
+        )
+
+    return int(best_type)
+
+
+def _select_bin_type_smallest(
+    item_type: int,
+    demand: np.ndarray,
+    capacities: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+) -> int:
+    """
+    Choose the feasible bin type with the smallest total capacity.
+
+    Ties are broken by lower operating cost, then lower purchase cost, then index.
+    """
+
+    fits_mask = np.all(capacities >= demand, axis=0)
+    if not np.any(fits_mask):
+        raise ValueError(
+            f"Item type {item_type} does not fit in any available bin type."
+        )
+
+    sizes = np.asarray(capacities, dtype=float).sum(axis=0)
+    purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
+    opening_vec = np.asarray(opening_costs, dtype=float).reshape(-1)
+
+    best_type = None
+    best_key = None
+    for bin_type, fits in enumerate(fits_mask):
+        if not fits:
+            continue
+        size = float(sizes[bin_type])
+        key = (size, opening_vec[bin_type], purchase_vec[bin_type], bin_type)
+        if best_key is None or key < best_key:
+            best_key = key
+            best_type = bin_type
+
+    if best_type is None:
+        raise ValueError(
+            f"Failed to choose a bin type for item type {item_type} using smallest capacity rule."
         )
 
     return int(best_type)

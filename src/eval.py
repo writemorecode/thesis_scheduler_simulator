@@ -106,11 +106,19 @@ def _build_scheduler(
 
         return _ffd
 
+    if normalized in {"ffds", "first_fit_decreasing_smallest"}:
+
+        def _ffd(problem: ProblemInstance) -> ScheduleResult:
+            return ffd_schedule(problem, BinTypeSelectionMethod.SMALLEST)
+
+        return _ffd
+
     if normalized in {"simple"}:
         return lambda problem: simple_scheduler(problem, max_iterations=iterations)
 
     raise ValueError(
-        f"Unknown scheduler '{name}'. Expected one of: ruin_recreate, ffd, simple_scheduler."
+        "Unknown scheduler "
+        f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, simple_scheduler."
     )
 
 
@@ -230,7 +238,7 @@ def parse_args() -> argparse.Namespace:
         "--scheduler",
         type=str,
         default="ruin_recreate",
-        help="Scheduler to run (ruin_recreate | ffd).",
+        help="Scheduler to run (ruin_recreate | ffd | ffdl | ffds).",
     )
     parser.add_argument(
         "--iterations",
