@@ -1,11 +1,11 @@
 """
 Analysis utilities for comparing algorithm performance results.
 
-Loads the per-algorithm CSVs from ``results_eval/``, joins them on ``filename``,
-computes pairwise log-ratios of ``total_cost``, and aggregates summary statistics.
-Designed for quick CLI use:
+Loads per-algorithm CSVs, joins them on ``filename``, computes pairwise log-ratios
+of ``total_cost``, and aggregates summary statistics. Designed for quick CLI use:
 
     python -m src.analysis --results-dir results_eval
+    python -m src.analysis eval_ffd.csv eval_ffd_largest.csv
 """
 
 from __future__ import annotations
@@ -22,9 +22,10 @@ import polars as pl
 
 # Default mapping of algorithm identifiers to their CSV filenames.
 DEFAULT_ALG_FILES = {
-    "ffd": "eval1_ffd.csv",
-    "simple_scheduler": "eval1_simple.csv",
-    # "ruin_recreate": "eval1_rr.csv",
+    "ffd": "eval_ffd.csv",
+    "ffd_largest": "eval_ffd_largest.csv",
+    "ffd_smallest": "eval_ffd_smallest.csv",
+    "best_fit_dotproduct": "eval_best_fit_dotproduct.csv",
 }
 
 
@@ -75,6 +76,18 @@ def load_algorithm_results(
         )
         data.append(AlgorithmData(name=algo, path=path, df=df))
     return data
+
+
+def _mapping_from_csv_paths(paths: Iterable[Path]) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for path in paths:
+        stem = path.stem
+        name = stem[5:] if stem.startswith("eval_") else stem
+        name = name.lower()
+        if name in mapping:
+            raise ValueError(f"Duplicate algorithm name derived from {path}")
+        mapping[name] = path.name
+    return mapping
 
 
 def join_on_filename(datasets: Iterable[AlgorithmData]) -> pl.DataFrame:
@@ -183,6 +196,12 @@ def main() -> None:
         help="Directory containing per-algorithm CSVs.",
     )
     parser.add_argument(
+        "csv_paths",
+        nargs="*",
+        type=Path,
+        help="Optional list of CSV files to analyze instead of --results-dir.",
+    )
+    parser.add_argument(
         "--export-joined",
         type=Path,
         help="Optional path to write the joined data with log-ratio columns as CSV.",
@@ -194,7 +213,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    joined, summary = run_analysis(args.results_dir)
+    if args.csv_paths:
+        mapping = _mapping_from_csv_paths(args.csv_paths)
+        parents = {path.parent.resolve() for path in args.csv_paths}
+        if len(parents) != 1:
+            raise ValueError(
+                "All CSV paths must live in the same directory when passed as arguments."
+            )
+        results_dir = parents.pop()
+        joined, summary = run_analysis(results_dir, mapping=mapping)
+    else:
+        joined, summary = run_analysis(args.results_dir)
 
     print("\nJoined data sample (first 5 rows):")
     print(joined.head())

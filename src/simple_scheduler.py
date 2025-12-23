@@ -7,6 +7,7 @@ from algorithms import (
     ffd_schedule,
     repack_schedule,
 )
+from packing import BinTypeSelectionMethod
 from problem_generation import ProblemInstance
 
 
@@ -41,7 +42,9 @@ def simple_scheduler(
         raise ValueError("Cost vectors must have one entry per machine type.")
 
     # 1. Compute initial solution
-    x_0 = ffd_schedule(problem)
+    x_0 = ffd_schedule(
+        problem, bin_selection_method=BinTypeSelectionMethod.MARGINAL_COST
+    )
     x = x_0
     x_best = x_0
     iterations_since_improvement = 0
