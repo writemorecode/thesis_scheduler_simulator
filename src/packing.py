@@ -586,6 +586,45 @@ def best_fit_dot(
     return BinPackingResult(total_cost=total_cost, bins=bins)
 
 
+def best_fit_decreasing_dot(
+    C: np.ndarray,
+    R: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    L: np.ndarray,
+    opened_bins: np.ndarray | Sequence[int] | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
+) -> BinPackingResult:
+    """
+    Best-fit dot-product packing after sorting jobs in non-increasing order.
+
+    The job requirement columns and their counts are permuted so that larger jobs
+    are packed first, then the bin contents are mapped back to the original job
+    ordering before returning.
+    """
+
+    R_sorted, L_sorted, sorted_indices = _sort_items_decreasing(R, L)
+    J = R_sorted.shape[1]
+
+    result = best_fit_dot(
+        C=C,
+        R=R_sorted,
+        purchase_costs=purchase_costs,
+        opening_costs=opening_costs,
+        L=L_sorted,
+        opened_bins=opened_bins,
+        purchased_bins=purchased_bins,
+    )
+
+    if J > 0:
+        inverse_perm = np.empty_like(sorted_indices)
+        inverse_perm[sorted_indices] = np.arange(J)
+        for bin_info in result.bins:
+            bin_info.item_counts = bin_info.item_counts[inverse_perm]
+
+    return result
+
+
 def first_fit_decreasing(
     C: np.ndarray,
     R: np.ndarray,

@@ -9,6 +9,7 @@ from packing import BinInfo as _BaseBinInfo
 from packing import (
     BinSelectionFn,
     BinTypeSelectionMethod,
+    best_fit_decreasing_dot,
     best_fit_dot,
     first_fit_decreasing,
 )
@@ -562,6 +563,78 @@ def best_fit_dot_schedule(problem: ProblemInstance) -> ScheduleResult:
             )
         else:
             packing_result = best_fit_dot(
+                C=C,
+                R=R,
+                purchase_costs=purchase_vec,
+                opening_costs=running_vec,
+                L=slot_jobs,
+                purchased_bins=initial_purchased,
+            )
+
+            slot_solution = build_time_slot_solution(
+                packing_result.bins,
+                M,
+                R,
+                running_vec,
+                resource_weights=resource_weights,
+            )
+
+        time_slot_solutions.append(slot_solution)
+        machine_vector = np.maximum(machine_vector, slot_solution.machine_counts)
+        total_cost += float(np.dot(running_vec, slot_solution.machine_counts))
+
+    return ScheduleResult(
+        total_cost=total_cost,
+        machine_vector=machine_vector,
+        time_slot_solutions=time_slot_solutions,
+        purchased_baseline=initial_purchased,
+    )
+
+
+def best_fit_decreasing_dot_schedule(problem: ProblemInstance) -> ScheduleResult:
+    """
+    Build a multi-slot schedule using decreasing normalized dot-product best-fit packing.
+    """
+
+    C = np.asarray(problem.capacities, dtype=float)
+    R = np.asarray(problem.requirements, dtype=float)
+    L = np.asarray(problem.job_counts, dtype=int)
+    purchase_vec = np.asarray(problem.purchase_costs, dtype=float).reshape(-1)
+    running_vec = np.asarray(problem.running_costs, dtype=float).reshape(-1)
+    resource_weights = np.asarray(problem.resource_weights, dtype=float).reshape(-1)
+
+    if C.ndim != 2 or R.ndim != 2:
+        raise ValueError("C and R must be 2D matrices.")
+    if C.shape[0] != R.shape[0]:
+        raise ValueError("C and R must describe the same resource dimensions.")
+
+    if L.ndim == 1:
+        L = L.reshape(1, -1)
+    elif L.ndim != 2:
+        raise ValueError("L must be a vector or a 2D matrix.")
+    if np.any(L < 0):
+        raise ValueError("Job counts in L must be non-negative.")
+
+    M = C.shape[1]
+    J = R.shape[1]
+    if L.shape[1] != J:
+        raise ValueError(f"L must contain {J} job-type columns; got {L.shape[1]}.")
+    if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
+        raise ValueError("Cost vectors must have one entry per machine type.")
+
+    initial_purchased = np.zeros(M, dtype=int)
+
+    time_slot_solutions: list[TimeSlotSolution] = []
+    machine_vector = np.zeros(M, dtype=int)
+    total_cost = 0.0
+
+    for slot_jobs in L:
+        if np.all(slot_jobs == 0):
+            slot_solution = TimeSlotSolution(
+                machine_counts=np.zeros(M, dtype=int), bins=[]
+            )
+        else:
+            packing_result = best_fit_decreasing_dot(
                 C=C,
                 R=R,
                 purchase_costs=purchase_vec,

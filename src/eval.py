@@ -9,7 +9,12 @@ from pathlib import Path
 
 import numpy as np
 
-from algorithms import ScheduleResult, best_fit_dot_schedule, ffd_schedule
+from algorithms import (
+    ScheduleResult,
+    best_fit_decreasing_dot_schedule,
+    best_fit_dot_schedule,
+    ffd_schedule,
+)
 from packing import BinTypeSelectionMethod
 from problem_generation import ProblemInstance
 from ruin_recreate import ruin_recreate_schedule
@@ -115,13 +120,16 @@ def _build_scheduler(
 
     if normalized in {"bfd", "best_fit_dot"}:
         return best_fit_dot_schedule
+    if normalized in {"bfdd", "bfd_decreasing", "best_fit_decreasing_dot"}:
+        return best_fit_decreasing_dot_schedule
 
     if normalized in {"simple"}:
         return lambda problem: simple_scheduler(problem, max_iterations=iterations)
 
     raise ValueError(
         "Unknown scheduler "
-        f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, bfd, simple_scheduler."
+        f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, "
+        "bfd, bfdd, simple_scheduler."
     )
 
 
