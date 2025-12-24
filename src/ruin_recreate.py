@@ -15,7 +15,7 @@ from algorithms import (
     ffd_schedule,
     repack_schedule,
 )
-from packing import first_fit_decreasing
+from packing import first_fit_decreasing, BinTypeSelectionMethod
 from problem_generation import ProblemInstance
 
 MAX_FRACTION = 0.95
@@ -30,6 +30,9 @@ def _copy_bins(bins: Sequence[BinInfo]) -> list[BinInfo]:
             capacity=b.capacity.copy(),
             remaining_capacity=b.remaining_capacity.copy(),
             item_counts=b.item_counts.copy(),
+            resource_weights=(
+                None if b.resource_weights is None else b.resource_weights.copy()
+            ),
         )
         for b in bins
     ]
@@ -71,6 +74,7 @@ def _recreate_with_opened_bins(
     running_costs: np.ndarray,
     *,
     opened_bins_fn,
+    resource_weights: np.ndarray | None = None,
     purchase_costs_override: np.ndarray | None = None,
     running_costs_override: np.ndarray | None = None,
 ) -> ScheduleResult:
@@ -106,12 +110,14 @@ def _recreate_with_opened_bins(
             running_vec,
             L=job_counts,
             opened_bins=opened_bins,
+            selection_method=BinTypeSelectionMethod.MARGINAL_COST,
         )
         recreated_slot = build_time_slot_solution(
             packing_result.bins,
             num_types,
             requirements,
             running_costs=running_vec,
+            resource_weights=resource_weights,
         )
         shaken_slots.append(recreated_slot)
 
@@ -130,10 +136,11 @@ def _shake_remove_lowest_utilization_bins(
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
     *,
+    resource_weights: np.ndarray | None = None,
     rng: np.random.Generator,
 ) -> ScheduleResult:
     """
-    Remove low-utilization bins and rebuild the schedule with FFDL.
+    Remove bins with the most weighted remaining capacity and rebuild with FFDL.
     """
 
     def opened_bins_fn(
@@ -141,7 +148,7 @@ def _shake_remove_lowest_utilization_bins(
     ) -> np.ndarray:
         bins = _copy_bins(slot.bins)
         rng.shuffle(np.array(bins))
-        _sort_bins_by_utilization(bins, requirements, running_costs)
+        _sort_bins_by_utilization(bins, resource_weights, running_costs)
 
         ruin_count = 0
         if bins:
@@ -159,6 +166,7 @@ def _shake_remove_lowest_utilization_bins(
         purchase_costs,
         running_costs,
         opened_bins_fn=opened_bins_fn,
+        resource_weights=resource_weights,
     )
 
 
@@ -170,6 +178,7 @@ def _shake_uniform_bin_counts(
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
     rng: np.random.Generator | None = None,
+    resource_weights: np.ndarray | None = None,
 ) -> ScheduleResult:
     """
     Flatten bin counts to a uniform level before recreating with FFD.
@@ -197,6 +206,7 @@ def _shake_uniform_bin_counts(
         purchase_costs,
         running_costs,
         opened_bins_fn=opened_bins_fn,
+        resource_weights=resource_weights,
     )
 
 
@@ -230,6 +240,7 @@ def _shake_remove_random_bins(
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
     *,
+    resource_weights: np.ndarray | None = None,
     rng: np.random.Generator,
     # config: ShakeConfig | None = None,
 ) -> ScheduleResult:
@@ -262,6 +273,7 @@ def _shake_remove_random_bins(
         purchase_costs,
         running_costs,
         opened_bins_fn=opened_bins_fn,
+        resource_weights=resource_weights,
     )
 
 
@@ -281,6 +293,7 @@ def _shake_penalize_dominant_type(
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
     *,
+    resource_weights: np.ndarray | None = None,
     rng: np.random.Generator,
 ) -> ScheduleResult:
     """
@@ -317,6 +330,7 @@ def _shake_penalize_dominant_type(
         purchase_costs,
         running_costs,
         opened_bins_fn=opened_bins_fn,
+        resource_weights=resource_weights,
         purchase_costs_override=updated_purchase,
         running_costs_override=updated_running,
     )
@@ -356,7 +370,7 @@ def ruin_recreate_schedule(
         raise ValueError("Cost vectors must have one entry per machine type.")
 
     # 1. Compute initial solution
-    x_0 = ffd_schedule(problem)
+    x_0 = ffd_schedule(problem, bin_selection_method=BinTypeSelectionMethod.SMALLEST)
     x = x_0
     x_best = x_0
     iterations_since_improvement = 0
@@ -368,14 +382,13 @@ def ruin_recreate_schedule(
 
     shake_operators = [
         _shake_remove_lowest_utilization_bins,
-        _shake_remove_random_bins,
-        _shake_uniform_bin_counts,
-        _shake_penalize_dominant_type,
+        # _shake_remove_random_bins,
+        # _shake_uniform_bin_counts,
+        # _shake_penalize_dominant_type,
     ]
     p = np.ones(len(shake_operators)) / len(shake_operators)
-    shake_success_counts = np.zeros(len(shake_operators))
 
-    while iterations_since_improvement < max_iterations:
+    while iterations_since_improvement < 5:
         it += 1
         iterations_since_improvement += 1
 
@@ -389,25 +402,27 @@ def ruin_recreate_schedule(
             requirements=R,
             purchase_costs=c_p,
             running_costs=c_r,
+            resource_weights=problem.resource_weights,
             rng=rng,
         )
 
         if x_shaken.total_cost < x_best.total_cost:
             iterations_since_improvement = 0
+            x_best = x_shaken
 
         # 3. Local improvement phase
-        x_repacked = repack_schedule(x_shaken, C, R, c_p, c_r)
+        x_repacked = repack_schedule(
+            x_shaken, C, R, c_p, c_r, resource_weights=problem.resource_weights
+        )
 
         if x_repacked.total_cost < x_best.total_cost:
             x_best = x_repacked
             iterations_since_improvement = 0
-            shake_success_counts[operator_index] += 1
+            print(
+                f"Iteration {it + 1}:\tCost: {x.total_cost:.4f}\tBest cost: {x_best.total_cost:.4f}\tMachines: {x.machine_vector}\tBest machines: {x_best.machine_vector}"
+            )
 
         x = x_repacked
 
-        print(
-            f"Iteration {it + 1}:\tCost: {x.total_cost:.4f}\tBest cost: {x_best.total_cost:.4f}\tMachines: {x.machine_vector}\tBest machines: {x_best.machine_vector}"
-        )
-
-    print(f"shake success counts: {shake_success_counts}")
+    print("-" * 50)
     return x_best

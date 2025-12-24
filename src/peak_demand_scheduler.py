@@ -93,7 +93,13 @@ def peak_demand_scheduler(problem: ProblemInstance) -> ScheduleResult:
             opened_bins=opened_bins,
             purchased_bins=purchased_bins,
         )
-        return build_time_slot_solution(result.bins, M, requirements, running_costs)
+        return build_time_slot_solution(
+            result.bins,
+            M,
+            requirements,
+            running_costs,
+            resource_weights=resource_weights,
+        )
 
     # Pack the heaviest slot first.
     heavy_solution = _pack_slot(job_counts[t_max])
@@ -131,6 +137,7 @@ def peak_demand_scheduler(problem: ProblemInstance) -> ScheduleResult:
         requirements=problem.requirements,
         purchase_costs=problem.purchase_costs,
         running_costs=problem.running_costs,
+        resource_weights=problem.resource_weights,
     )
 
     return repacked_solution

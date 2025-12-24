@@ -18,24 +18,18 @@ from problem_generation import ProblemInstance
 class BinInfo(_BaseBinInfo):
     """Extended bin info with convenience metrics."""
 
-    def utilization(self, requirements: np.ndarray) -> float:
+    def utilization(self, resource_weights: np.ndarray | None = None) -> float:
         """
-        Maximum utilization ratio across all resource dimensions.
+        Weighted remaining capacity based on resource_weights.
 
         Parameters
         ----------
-        requirements : np.ndarray
-            ``(K, J)`` matrix describing resource demand per job type.
+        resource_weights : np.ndarray, optional
+            Resource weight vector with shape ``(K,)``.
         """
 
-        req = np.asarray(requirements, dtype=float)
-        if req.ndim != 2:
-            raise ValueError("requirements must be a 2D matrix.")
-
-        if req.shape[1] != np.asarray(self.item_counts).reshape(-1).shape[0]:
-            raise ValueError(
-                "requirements column count must match the size of item_counts."
-            )
+        if resource_weights is not None:
+            self.update_utilization_cache(resource_weights)
 
         return float(self._cached_utilization)
 
@@ -58,6 +52,11 @@ class TimeSlotSolution:
                     capacity=b.capacity.copy(),
                     remaining_capacity=b.remaining_capacity.copy(),
                     item_counts=b.item_counts.copy(),
+                    resource_weights=(
+                        None
+                        if b.resource_weights is None
+                        else b.resource_weights.copy()
+                    ),
                 )
                 for b in self.bins
             ],
@@ -405,8 +404,15 @@ def build_time_slot_solution(
     num_types: int,
     requirements: np.ndarray,
     running_costs: np.ndarray | None = None,
+    resource_weights: np.ndarray | None = None,
 ) -> TimeSlotSolution:
     """Construct a time-slot solution from a raw bin list."""
+
+    weights = (
+        None if resource_weights is None else np.asarray(resource_weights, dtype=float)
+    )
+    if weights is not None:
+        weights = weights.reshape(-1)
 
     active_bins: list[BinInfo] = []
     for bin_info in bins:
@@ -418,10 +424,11 @@ def build_time_slot_solution(
                 capacity=bin_info.capacity.copy(),
                 remaining_capacity=bin_info.remaining_capacity.copy(),
                 item_counts=bin_info.item_counts.copy(),
+                resource_weights=None if weights is None else weights.copy(),
             )
         )
 
-    _sort_bins_by_utilization(active_bins, requirements, running_costs)
+    _sort_bins_by_utilization(active_bins, resource_weights, running_costs)
     machine_counts = _machine_counts_from_bins(active_bins, num_types)
     return TimeSlotSolution(machine_counts=machine_counts, bins=active_bins)
 
@@ -448,6 +455,7 @@ def ffd_schedule(
     L = np.asarray(problem.job_counts, dtype=int)
     purchase_vec = np.asarray(problem.purchase_costs, dtype=float).reshape(-1)
     running_vec = np.asarray(problem.running_costs, dtype=float).reshape(-1)
+    resource_weights = np.asarray(problem.resource_weights, dtype=float).reshape(-1)
 
     if C.ndim != 2 or R.ndim != 2:
         raise ValueError("C and R must be 2D matrices.")
@@ -490,7 +498,13 @@ def ffd_schedule(
                 selection_method=bin_selection_method,
             )
 
-            slot_solution = build_time_slot_solution(ffd_result.bins, M, R, running_vec)
+            slot_solution = build_time_slot_solution(
+                ffd_result.bins,
+                M,
+                R,
+                running_vec,
+                resource_weights=resource_weights,
+            )
 
         time_slot_solutions.append(slot_solution)
         machine_vector = np.maximum(machine_vector, slot_solution.machine_counts)
@@ -514,6 +528,7 @@ def best_fit_dot_schedule(problem: ProblemInstance) -> ScheduleResult:
     L = np.asarray(problem.job_counts, dtype=int)
     purchase_vec = np.asarray(problem.purchase_costs, dtype=float).reshape(-1)
     running_vec = np.asarray(problem.running_costs, dtype=float).reshape(-1)
+    resource_weights = np.asarray(problem.resource_weights, dtype=float).reshape(-1)
 
     if C.ndim != 2 or R.ndim != 2:
         raise ValueError("C and R must be 2D matrices.")
@@ -556,7 +571,11 @@ def best_fit_dot_schedule(problem: ProblemInstance) -> ScheduleResult:
             )
 
             slot_solution = build_time_slot_solution(
-                packing_result.bins, M, R, running_vec
+                packing_result.bins,
+                M,
+                R,
+                running_vec,
+                resource_weights=resource_weights,
             )
 
         time_slot_solutions.append(slot_solution)
@@ -573,10 +592,10 @@ def best_fit_dot_schedule(problem: ProblemInstance) -> ScheduleResult:
 
 def _sort_bins_by_utilization(
     bins: list[BinInfo],
-    requirements: np.ndarray,
+    resource_weights: np.ndarray | None,
     running_costs: np.ndarray | None = None,
 ) -> None:
-    """Sort bins in-place by utilization and running cost tie breaker."""
+    """Sort bins by weighted remaining capacity (highest first) and running cost."""
 
     if not bins:
         return
@@ -589,7 +608,8 @@ def _sort_bins_by_utilization(
         cost_component = (
             -float(cost_vector[bin_info.bin_type]) if cost_vector is not None else 0.0
         )
-        return (bin_info.utilization(requirements), cost_component)
+        utilization = bin_info.utilization(resource_weights)
+        return (-utilization, cost_component)
 
     bins.sort(key=_sort_key)
 
@@ -674,16 +694,18 @@ def repack_jobs(
     capacities: np.ndarray,
     requirements: np.ndarray,
     running_costs: np.ndarray,
+    resource_weights: np.ndarray | None = None,
 ) -> TimeSlotSolution:
     """
     Heuristic job re-packing as described in ``method.typ``.
 
-    Jobs are iteratively moved from the least utilized bin to bins with higher
-    utilization (breaking ties by per-time-slot running cost). When a bin becomes
-    empty it is removed, which reduces the powered-on machine count for the slot.
-    After moving items out of a source bin, the remaining contents are also checked
-    to see if they fit in a cheaper/smaller bin type; if so, the bin is downsized
-    and its capacity/remaining state is updated.
+    Jobs are iteratively moved from bins with the most weighted remaining capacity
+    to bins with less remaining capacity (breaking ties by per-time-slot running
+    cost). When a bin becomes empty it is removed, which reduces the powered-on
+    machine count for the slot. After moving items out of a source bin, the
+    remaining contents are also checked to see if they fit in a cheaper/smaller
+    bin type; if so, the bin is downsized and its capacity/remaining state is
+    updated.
     """
 
     if not slot_solution.bins:
@@ -692,6 +714,8 @@ def repack_jobs(
     capacities = np.asarray(capacities, dtype=float)
     requirements = np.asarray(requirements, dtype=float)
     running_costs = np.asarray(running_costs, dtype=float).reshape(-1)
+    if resource_weights is not None:
+        resource_weights = np.asarray(resource_weights, dtype=float).reshape(-1)
 
     if capacities.ndim != 2:
         raise ValueError("capacities must be a 2D matrix.")
@@ -710,29 +734,32 @@ def repack_jobs(
             capacity=b.capacity.copy(),
             remaining_capacity=b.remaining_capacity.copy(),
             item_counts=b.item_counts.copy(),
+            resource_weights=(
+                None if b.resource_weights is None else b.resource_weights.copy()
+            ),
         )
         for b in slot_solution.bins
     ]
 
     _refresh_bin_utilization(bins)
-    # _sort_bins_by_utilization(bins, requirements, running_costs)
+    # _sort_bins_by_utilization(bins, resource_weights, running_costs)
 
     while True:
         moved = False
-        _sort_bins_by_utilization(bins, requirements, running_costs)
+        _sort_bins_by_utilization(bins, resource_weights, running_costs)
         for source_idx, source in enumerate(bins):
             if int(np.sum(source.item_counts)) == 0:
                 continue
 
-            source_util = source.utilization(requirements)
+            source_util = source.utilization(resource_weights)
             job_sequence = _sorted_jobs_for_bin(source, requirements)
 
             for dest_idx in range(len(bins) - 1, source_idx, -1):
                 dest = bins[dest_idx]
                 if dest is source:
                     continue
-                dest_util = dest.utilization(requirements)
-                if dest_util <= source_util:
+                dest_util = dest.utilization(resource_weights)
+                if dest_util >= source_util:
                     continue
 
                 job_moved = False
@@ -779,6 +806,7 @@ def repack_schedule(
     requirements: np.ndarray,
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
+    resource_weights: np.ndarray | None = None,
 ) -> ScheduleResult:
     """Repack all time slots with ``repack_jobs`` and recompute costs."""
 
@@ -789,6 +817,7 @@ def repack_schedule(
             capacities=capacities,
             requirements=requirements,
             running_costs=running_costs,
+            resource_weights=resource_weights,
         )
         _refresh_bin_utilization(repacked_slot.bins)
         repacked_slots.append(repacked_slot)

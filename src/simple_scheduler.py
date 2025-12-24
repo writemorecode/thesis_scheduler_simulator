@@ -54,11 +54,13 @@ def simple_scheduler(
     )
     it = 0
 
-    while iterations_since_improvement < max_iterations:
+    while iterations_since_improvement < 1:
         it += 1
         iterations_since_improvement += 1
 
-        x_repacked = repack_schedule(x, C, R, c_p, c_r)
+        x_repacked = repack_schedule(
+            x, C, R, c_p, c_r, resource_weights=problem.resource_weights
+        )
 
         if x_repacked.total_cost < x_best.total_cost:
             x_best = x_repacked

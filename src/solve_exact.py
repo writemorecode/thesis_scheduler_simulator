@@ -41,6 +41,7 @@ def build_exact_ilp(
     job_counts = np.asarray(problem.job_counts, dtype=int)
     purchase_costs = np.asarray(problem.purchase_costs, dtype=float).reshape(-1)
     running_costs = np.asarray(problem.running_costs, dtype=float).reshape(-1)
+    resource_weights = np.asarray(problem.resource_weights, dtype=float).reshape(-1)
 
     if capacities.ndim != 2 or requirements.ndim != 2:
         raise ValueError("capacities and requirements must be 2D matrices.")
@@ -157,6 +158,7 @@ def build_exact_ilp(
         job_counts=job_counts,
         max_machines_per_type=max_machines_per_type,
         upper_bound=upper_bound,
+        resource_weights=resource_weights,
     )
 
     return ILPModelData(
@@ -184,6 +186,7 @@ def run_exact_solver(
     job_counts = metadata["job_counts"]
     max_machines_per_type = metadata["max_machines_per_type"]
     upper_bound = metadata["upper_bound"]
+    resource_weights = metadata.get("resource_weights")
 
     K, M = capacities.shape
     _, J = requirements.shape
@@ -241,6 +244,7 @@ def run_exact_solver(
                         capacity=capacity_col.copy(),
                         remaining_capacity=remaining,
                         item_counts=item_counts,
+                        resource_weights=resource_weights,
                     )
                 )
                 machine_counts[m] += 1

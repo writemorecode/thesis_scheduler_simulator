@@ -16,6 +16,7 @@ class BinInfo:
     capacity: np.ndarray
     remaining_capacity: np.ndarray
     item_counts: np.ndarray
+    resource_weights: np.ndarray | None = field(default=None, repr=False)
     _cached_utilization: float = field(init=False, repr=False, default=0.0)
 
     def __post_init__(self) -> None:
@@ -31,22 +32,34 @@ class BinInfo:
         return "\n".join(parts)
 
     def _compute_utilization(self) -> float:
-        """Maximum utilization across resources based on capacity usage."""
+        """Weighted remaining capacity based on resource_weights."""
 
-        capacity = np.asarray(self.capacity, dtype=float).reshape(-1, 1)
-        remaining = np.asarray(self.remaining_capacity, dtype=float).reshape(-1, 1)
-        load = capacity - remaining
+        if self.resource_weights is None:
+            return 0.0
 
-        with np.errstate(divide="ignore", invalid="ignore"):
-            ratios = np.divide(
-                load, capacity, out=np.zeros_like(load), where=capacity > 0
+        weights = np.asarray(self.resource_weights, dtype=float).reshape(-1)
+        remaining = np.asarray(self.remaining_capacity, dtype=float).reshape(-1)
+        if weights.shape[0] != remaining.shape[0]:
+            raise ValueError(
+                "resource_weights must match remaining_capacity length "
+                f"({remaining.shape[0]}), got {weights.shape[0]}."
             )
 
-        return float(ratios.max()) if ratios.size else 0.0
+        return float(np.dot(weights, remaining))
 
-    def update_utilization_cache(self) -> None:
+    def update_utilization_cache(
+        self, resource_weights: np.ndarray | None = None
+    ) -> None:
         """Refresh cached utilization after bin contents change."""
 
+        if resource_weights is not None:
+            weights = np.asarray(resource_weights, dtype=float).reshape(-1)
+            capacity_len = np.asarray(self.capacity, dtype=float).reshape(-1).shape[0]
+            if weights.shape[0] != capacity_len:
+                raise ValueError(
+                    f"resource_weights must have length {capacity_len}, got {weights.shape[0]}."
+                )
+            self.resource_weights = weights
         self._cached_utilization = self._compute_utilization()
 
 
