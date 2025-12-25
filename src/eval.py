@@ -15,6 +15,7 @@ from algorithms import (
     best_fit_dot_schedule,
     ffd_schedule,
 )
+from best_fit import bfd_schedule
 from packing import BinTypeSelectionMethod
 from problem_generation import ProblemInstance
 from ruin_recreate import ruin_recreate_schedule
@@ -126,10 +127,13 @@ def _build_scheduler(
     if normalized in {"simple"}:
         return lambda problem: simple_scheduler(problem, max_iterations=iterations)
 
+    if normalized in {"bfdw", "bfdw_algorithm", "bfdw_weighted_best_fit"}:
+        return bfd_schedule
+
     raise ValueError(
         "Unknown scheduler "
         f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, "
-        "bfd, bfdd, simple_scheduler."
+        "bfd, bfdd, simple_scheduler, bfdw."
     )
 
 
