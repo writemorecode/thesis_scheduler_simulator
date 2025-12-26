@@ -25,7 +25,7 @@ DEFAULT_ALG_FILES = {
     "ffd": "eval_ffd.csv",
     "ffd_largest": "eval_ffd_largest.csv",
     "ffd_smallest": "eval_ffd_smallest.csv",
-    "best_fit_dotproduct": "eval_best_fit_dotproduct.csv",
+    "best_fit_weighted": "eval_best_fit_weighted.csv",
 }
 
 

@@ -11,8 +11,6 @@ import numpy as np
 
 from algorithms import (
     ScheduleResult,
-    best_fit_decreasing_dot_schedule,
-    best_fit_dot_schedule,
     ffd_schedule,
 )
 from best_fit import bfd_schedule
@@ -119,11 +117,6 @@ def _build_scheduler(
 
         return _ffd
 
-    if normalized in {"bfd", "best_fit_dot"}:
-        return best_fit_dot_schedule
-    if normalized in {"bfdd", "bfd_decreasing", "best_fit_decreasing_dot"}:
-        return best_fit_decreasing_dot_schedule
-
     if normalized in {"simple"}:
         return lambda problem: simple_scheduler(problem, max_iterations=iterations)
 
@@ -133,7 +126,7 @@ def _build_scheduler(
     raise ValueError(
         "Unknown scheduler "
         f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, "
-        "bfd, bfdd, simple_scheduler, bfdw."
+        "simple_scheduler, bfdw."
     )
 
 

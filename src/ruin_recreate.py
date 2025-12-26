@@ -15,7 +15,7 @@ from algorithms import (
     ffd_schedule,
     repack_schedule,
 )
-from packing import first_fit_decreasing, BinTypeSelectionMethod
+from packing import BinTypeSelectionMethod, first_fit_decreasing
 from problem_generation import ProblemInstance
 
 MAX_FRACTION = 0.95
