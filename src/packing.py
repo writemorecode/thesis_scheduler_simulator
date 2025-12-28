@@ -139,6 +139,37 @@ def _sort_items_decreasing(
     return R_sorted, L_sorted, sorted_indices
 
 
+def sort_items_by_weight(
+    R: np.ndarray, L: np.ndarray, weights: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sort item types by weighted demand (largest first)."""
+
+    R_array = np.asarray(R, dtype=float)
+    if R_array.ndim != 2:
+        raise ValueError("R must be a 2D matrix.")
+
+    L_array = np.asarray(L, dtype=int).reshape(-1)
+    if L_array.shape[0] != R_array.shape[1]:
+        raise ValueError(
+            f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
+        )
+    if np.any(L_array < 0):
+        raise ValueError("L entries must be non-negative.")
+
+    weight_vec = np.asarray(weights, dtype=float).reshape(-1)
+    if weight_vec.shape[0] != R_array.shape[0]:
+        raise ValueError(
+            f"weights must have length {R_array.shape[0]}, got {weight_vec.shape[0]}."
+        )
+
+    weighted_sizes = weight_vec @ R_array
+    sorted_indices = np.argsort(-weighted_sizes, kind="mergesort")
+
+    R_sorted = R_array[:, sorted_indices]
+    L_sorted = L_array[sorted_indices]
+    return R_sorted, L_sorted, sorted_indices
+
+
 def _select_bin_type_marginal_cost(
     item_type: int,
     demand: np.ndarray,
@@ -479,6 +510,62 @@ def first_fit_decreasing(
     """
 
     R_sorted, L_sorted, sorted_indices = _sort_items_decreasing(R, L)
+    J = R_sorted.shape[1]
+
+    result = first_fit(
+        C,
+        R_sorted,
+        purchase_costs,
+        opening_costs,
+        L_sorted,
+        opened_bins=opened_bins,
+        purchased_bins=purchased_bins,
+        selection_method=selection_method,
+    )
+
+    if J > 0:
+        inverse_perm = np.empty_like(sorted_indices)
+        inverse_perm[sorted_indices] = np.arange(J)
+        for bin_info in result.bins:
+            bin_info.item_counts = bin_info.item_counts[inverse_perm]
+
+    return result
+
+
+def ffd_weighted_sort(
+    C: np.ndarray,
+    R: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    L: np.ndarray,
+    selection_method: BinTypeSelectionMethod,
+    *,
+    weights: np.ndarray | None = None,
+    opened_bins: np.ndarray | Sequence[int] | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
+) -> BinPackingResult:
+    """
+    Run FFD after sorting job types by weighted demand.
+
+    The packing logic mirrors :func:`first_fit_decreasing`, but the job types are
+    ordered using the weighted-demand rule from the best-fit heuristic.
+    """
+
+    R_array = np.asarray(R, dtype=float)
+    if R_array.ndim != 2:
+        raise ValueError("R must be a 2D matrix.")
+
+    weight_vec = (
+        np.ones(R_array.shape[0], dtype=float)
+        if weights is None
+        else np.asarray(weights, dtype=float).reshape(-1)
+    )
+    if weight_vec.shape[0] != R_array.shape[0]:
+        raise ValueError(
+            f"weights must have length {R_array.shape[0]}, got {weight_vec.shape[0]}."
+        )
+
+    R_sorted, L_sorted, sorted_indices = sort_items_by_weight(R_array, L, weight_vec)
     J = R_sorted.shape[1]
 
     result = first_fit(

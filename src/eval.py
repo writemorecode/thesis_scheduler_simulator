@@ -12,6 +12,7 @@ import numpy as np
 from algorithms import (
     ScheduleResult,
     ffd_schedule,
+    ffd_weighted_sort_schedule,
 )
 from best_fit import bfd_schedule
 from packing import BinTypeSelectionMethod
@@ -117,6 +118,15 @@ def _build_scheduler(
 
         return _ffd
 
+    if normalized in {"ffdws", "ffd_weighted_sort"}:
+
+        def _ffd(problem: ProblemInstance) -> ScheduleResult:
+            return ffd_weighted_sort_schedule(
+                problem, BinTypeSelectionMethod.MARGINAL_COST
+            )
+
+        return _ffd
+
     if normalized in {"simple"}:
         return lambda problem: simple_scheduler(problem, max_iterations=iterations)
 
@@ -126,7 +136,7 @@ def _build_scheduler(
     raise ValueError(
         "Unknown scheduler "
         f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, "
-        "simple_scheduler, bfdw."
+        "ffd_weighted_sort, simple_scheduler, bfdw."
     )
 
 
@@ -246,7 +256,7 @@ def parse_args() -> argparse.Namespace:
         "--scheduler",
         type=str,
         default="ruin_recreate",
-        help="Scheduler to run (ruin_recreate | ffd | ffdl | ffds).",
+        help="Scheduler to run (ruin_recreate | ffd | ffdl | ffds | ffd_weighted_sort).",
     )
     parser.add_argument(
         "--iterations",

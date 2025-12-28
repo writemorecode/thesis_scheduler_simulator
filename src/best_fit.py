@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from algorithms import ScheduleResult, build_time_slot_solution
-from packing import BinInfo, BinPackingResult
+from packing import BinInfo, BinPackingResult, sort_items_by_weight
 from problem_generation import ProblemInstance
 
 
@@ -25,38 +25,6 @@ def _prepare_count_vector(
     if np.any(arr < 0):
         raise ValueError(f"{name} entries must be non-negative.")
     return arr
-
-
-def _sort_items_by_weight(
-    R: np.ndarray, L: np.ndarray, weights: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Sort item types by weighted demand (largest first)."""
-
-    R_array = np.asarray(R, dtype=float)
-    if R_array.ndim != 2:
-        raise ValueError("R must be a 2D matrix.")
-
-    L_array = np.asarray(L, dtype=int).reshape(-1)
-    if L_array.shape[0] != R_array.shape[1]:
-        raise ValueError(
-            f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
-        )
-    if np.any(L_array < 0):
-        raise ValueError("L entries must be non-negative.")
-
-    weight_vec = np.asarray(weights, dtype=float).reshape(-1)
-    if weight_vec.shape[0] != R_array.shape[0]:
-        raise ValueError(
-            f"weights must have length {R_array.shape[0]}, got {weight_vec.shape[0]}."
-        )
-
-    # Weighted demand prioritizes resource-tight job types.
-    weighted_sizes = weight_vec @ R_array
-    sorted_indices = np.argsort(-weighted_sizes, kind="mergesort")
-
-    R_sorted = R_array[:, sorted_indices]
-    L_sorted = L_array[sorted_indices]
-    return R_sorted, L_sorted, sorted_indices
 
 
 def _select_open_bin(
@@ -216,7 +184,7 @@ def bfd_weighted_best_fit(
     if weight_vec.shape[0] != K:
         raise ValueError(f"weights must have length {K}, got {weight_vec.shape[0]}.")
 
-    R_sorted, L_sorted, sorted_indices = _sort_items_by_weight(R, L, weight_vec)
+    R_sorted, L_sorted, sorted_indices = sort_items_by_weight(R, L, weight_vec)
     J_sorted = R_sorted.shape[1]
 
     opened_bins_vec = (
