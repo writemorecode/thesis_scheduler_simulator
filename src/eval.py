@@ -121,9 +121,7 @@ def _build_scheduler(
     if normalized in {"ffdws", "ffd_weighted_sort"}:
 
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_weighted_sort_schedule(
-                problem, BinTypeSelectionMethod.MARGINAL_COST
-            )
+            return ffd_weighted_sort_schedule(problem, BinTypeSelectionMethod.SLACK)
 
         return _ffd
 
