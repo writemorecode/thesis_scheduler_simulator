@@ -86,6 +86,7 @@ class BinTypeSelectionMethod(Enum):
     MARGINAL_COST = "marginal cost"
     LARGEST = "largest"
     SMALLEST = "smallest"
+    SLACK = "weighted slack"
 
 
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
@@ -219,6 +220,85 @@ def _select_bin_type_marginal_cost(
     return best_type, best_requires_purchase
 
 
+def _select_bin_type_slack(
+    item_type: int,
+    demand: np.ndarray,
+    capacities: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    purchased_counts: np.ndarray,
+    open_counts: np.ndarray,
+    weights: np.ndarray | None,
+    remaining_items: int,
+    eps: float = 1e-12,
+) -> tuple[int, bool]:
+    """
+    Choose the bin type with the lowest weighted slack score after placement.
+    """
+
+    demand_flat = np.asarray(demand, dtype=float).reshape(-1)
+    positive = demand_flat > 0
+    if not np.any(positive):
+        cheapest = int(np.argmin(opening_costs))
+        requires_purchase = open_counts[cheapest] >= purchased_counts[cheapest]
+        return cheapest, requires_purchase
+
+    fits_mask = np.all(capacities >= demand_flat[:, None], axis=0)
+    if not np.any(fits_mask):
+        raise ValueError(
+            f"Item type {item_type} does not fit in any available bin type."
+        )
+
+    if weights is None:
+        weight_vec = np.ones(capacities.shape[0], dtype=float)
+    else:
+        weight_vec = np.asarray(weights, dtype=float).reshape(-1)
+        if weight_vec.shape[0] != capacities.shape[0]:
+            raise ValueError(
+                "weights must have length "
+                f"{capacities.shape[0]}, got {weight_vec.shape[0]}."
+            )
+
+    best_type = None
+    best_key = None
+    best_requires_purchase = False
+
+    for bin_type, fits in enumerate(fits_mask):
+        if not fits:
+            continue
+
+        requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
+        incremental_cost = (
+            float(opening_costs[bin_type])
+            if not requires_purchase
+            else float(purchase_costs[bin_type] + opening_costs[bin_type])
+        )
+
+        capacity_vec = capacities[:, bin_type]
+        ratios = capacity_vec[positive] / demand_flat[positive]
+        max_fit = int(np.floor(np.min(ratios) + eps))
+        max_fit = max(1, max_fit)
+        place_count = min(remaining_items, max_fit)
+        remaining_after = capacity_vec - demand_flat * place_count
+
+        capacity_weight = float(np.dot(weight_vec, capacity_vec))
+        capacity_weight = max(capacity_weight, eps)
+        slack_score = float(np.dot(weight_vec, remaining_after**2)) / capacity_weight
+        key = (slack_score, incremental_cost, bin_type)
+
+        if best_key is None or key < best_key:
+            best_key = key
+            best_type = bin_type
+            best_requires_purchase = requires_purchase
+
+    if best_type is None:
+        raise ValueError(
+            f"Failed to choose a bin type for item type {item_type} using slack rule."
+        )
+
+    return int(best_type), best_requires_purchase
+
+
 def _select_bin_type(
     selection_method: BinTypeSelectionMethod,
     item_type: int,
@@ -228,6 +308,8 @@ def _select_bin_type(
     opening_costs: np.ndarray,
     purchased_counts: np.ndarray,
     open_counts: np.ndarray,
+    weights: np.ndarray | None = None,
+    remaining_items: int = 1,
 ) -> tuple[int, bool]:
     if selection_method == BinTypeSelectionMethod.MARGINAL_COST:
         return _select_bin_type_marginal_cost(
@@ -253,6 +335,19 @@ def _select_bin_type(
         )
         requires_purchase = open_counts[bin_type] >= purchased_counts[bin_type]
         return bin_type, requires_purchase
+
+    if selection_method == BinTypeSelectionMethod.SLACK:
+        return _select_bin_type_slack(
+            item_type,
+            demand,
+            capacities,
+            purchase_costs,
+            opening_costs,
+            purchased_counts,
+            open_counts,
+            weights,
+            remaining_items,
+        )
 
     raise ValueError(f"Unknown bin selection method: {selection_method!r}")
 
@@ -296,6 +391,7 @@ def first_fit(
     opening_costs: np.ndarray,
     L: np.ndarray,
     selection_method: BinTypeSelectionMethod,
+    weights: np.ndarray | None = None,
     opened_bins: np.ndarray | Sequence[int] | None = None,
     purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
@@ -317,6 +413,9 @@ def first_fit(
     selection_method : BinTypeSelectionMethod, optional
         Determines how new bin types are selected when a new bin is needed.
         Defaults to marginal cost.
+    weights : np.ndarray, optional
+        Resource weight vector used by the SLACK selection method. Defaults to
+        equal weights when omitted.
     opened_bins : array-like of shape (M,), optional
         Pre-opened bin counts per type. These bins are available before packing starts
         and incur only the opening cost if they were already purchased.
@@ -361,6 +460,16 @@ def first_fit(
         raise ValueError("Job counts in L must be non-negative.")
     if np.any(L < 0):
         raise ValueError("Job counts in L must be non-negative.")
+
+    weight_vec = None
+    if selection_method == BinTypeSelectionMethod.SLACK:
+        weight_vec = (
+            np.ones(K, dtype=float)
+            if weights is None
+            else np.asarray(weights, dtype=float).reshape(-1)
+        )
+        if weight_vec.shape[0] != K:
+            raise ValueError(f"weights must have length {K}, got {weight_vec.shape[0]}.")
 
     opened_bins_vec = (
         np.zeros(M, dtype=int)
@@ -435,6 +544,8 @@ def first_fit(
                 opening_costs,
                 purchased_counts,
                 open_counts,
+                weights=weight_vec,
+                remaining_items=remaining_items,
             )
 
             incremental_cost = (
@@ -494,6 +605,7 @@ def first_fit_decreasing(
     opening_costs: np.ndarray,
     L: np.ndarray,
     selection_method: BinTypeSelectionMethod,
+    weights: np.ndarray | None = None,
     opened_bins: np.ndarray | Sequence[int] | None = None,
     purchased_bins: np.ndarray | Sequence[int] | None = None,
 ) -> BinPackingResult:
@@ -521,6 +633,7 @@ def first_fit_decreasing(
         opened_bins=opened_bins,
         purchased_bins=purchased_bins,
         selection_method=selection_method,
+        weights=weights,
     )
 
     if J > 0:
@@ -548,7 +661,8 @@ def ffd_weighted_sort(
     Run FFD after sorting job types by weighted demand.
 
     The packing logic mirrors :func:`first_fit_decreasing`, but the job types are
-    ordered using the weighted-demand rule from the best-fit heuristic.
+    ordered using the weighted-demand rule from the best-fit heuristic. The same
+    weights are reused for the SLACK bin selection method.
     """
 
     R_array = np.asarray(R, dtype=float)
@@ -577,6 +691,7 @@ def ffd_weighted_sort(
         opened_bins=opened_bins,
         purchased_bins=purchased_bins,
         selection_method=selection_method,
+        weights=weight_vec,
     )
 
     if J > 0:

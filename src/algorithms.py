@@ -496,6 +496,7 @@ def ffd_schedule(
                 L=slot_jobs,
                 purchased_bins=initial_purchased,
                 selection_method=bin_selection_method,
+                weights=resource_weights,
             )
 
             slot_solution = build_time_slot_solution(
