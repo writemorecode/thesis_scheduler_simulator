@@ -150,8 +150,7 @@ def _select_new_bin_type(
         capacity_weight = float(np.dot(weights, capacity_vec))
         capacity_weight = max(capacity_weight, eps)
         slack_score = float(np.dot(weights, remaining_after**2)) / capacity_weight
-        cost_score = incremental_cost / capacity_weight
-        key = (cost_score + slack_score, slack_score, incremental_cost, bin_type)
+        key = (slack_score, incremental_cost, bin_type)
 
         if best_key is None or key < best_key:
             best_key = key
