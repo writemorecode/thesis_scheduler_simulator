@@ -147,6 +147,17 @@ def _build_scheduler(
 
         return _ffd
 
+    if normalized in {"ffd_prod"}:
+
+        def _ffd(problem: ProblemInstance) -> ScheduleResult:
+            return ffd_schedule(
+                problem,
+                BinTypeSelectionMethod.MARGINAL_COST,
+                job_ordering_method=JobTypeOrderingMethod.SORT_PROD,
+            )
+
+        return _ffd
+
     if normalized in {"simple"}:
         return lambda problem: simple_scheduler(problem, max_iterations=iterations)
 
@@ -156,7 +167,7 @@ def _build_scheduler(
     raise ValueError(
         "Unknown scheduler "
         f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, "
-        "ffd_weighted_sort, ffd_sum, ffd_max, simple_scheduler, bfdw."
+        "ffd_weighted_sort, ffd_sum, ffd_max, ffd_prod, simple_scheduler, bfdw."
     )
 
 
@@ -278,7 +289,7 @@ def parse_args() -> argparse.Namespace:
         default="ruin_recreate",
         help=(
             "Scheduler to run (ruin_recreate | ffd | ffdl | ffds | "
-            "ffd_weighted_sort | ffd_sum | ffd_max)."
+            "ffd_weighted_sort | ffd_sum | ffd_max | ffd_prod)."
         ),
     )
     parser.add_argument(

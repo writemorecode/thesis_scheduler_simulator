@@ -94,6 +94,7 @@ class JobTypeOrderingMethod(Enum):
     SORT_BY_WEIGHT = "sort by weight"
     SORT_SUM = "sort sum"
     SORT_MAX = "sort max"
+    SORT_PROD = "sort prod"
 
 
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
@@ -230,6 +231,29 @@ def sort_items_by_max(
     return _sort_items_by_max_prepared(R_array, L_array)
 
 
+def _sort_items_by_prod_prepared(
+    R_array: np.ndarray, L_array: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if R_array.shape[0] == 0:
+        prod_sizes = np.zeros(R_array.shape[1], dtype=float)
+    else:
+        prod_sizes = np.prod(R_array, axis=0)
+    sorted_indices = np.argsort(-prod_sizes, kind="mergesort")
+
+    R_sorted = R_array[:, sorted_indices]
+    L_sorted = L_array[sorted_indices]
+    return R_sorted, L_sorted, sorted_indices
+
+
+def sort_items_by_prod(
+    R: np.ndarray, L: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sort item types by demand product (largest first)."""
+
+    R_array, L_array = _prepare_sort_inputs(R, L)
+    return _sort_items_by_prod_prepared(R_array, L_array)
+
+
 def _sort_job_types(
     R: np.ndarray,
     L: np.ndarray,
@@ -241,6 +265,7 @@ def _sort_job_types(
         JobTypeOrderingMethod.SORT_BY_WEIGHT,
         JobTypeOrderingMethod.SORT_SUM,
         JobTypeOrderingMethod.SORT_MAX,
+        JobTypeOrderingMethod.SORT_PROD,
     }:
         raise ValueError(f"Unknown job ordering method: {ordering_method!r}")
 
@@ -274,7 +299,13 @@ def _sort_job_types(
         )
         return R_sorted, L_sorted, sorted_indices, weights
 
-    R_sorted, L_sorted, sorted_indices = _sort_items_by_max_prepared(R_array, L_array)
+    if ordering_method == JobTypeOrderingMethod.SORT_MAX:
+        R_sorted, L_sorted, sorted_indices = _sort_items_by_max_prepared(
+            R_array, L_array
+        )
+        return R_sorted, L_sorted, sorted_indices, weights
+
+    R_sorted, L_sorted, sorted_indices = _sort_items_by_prod_prepared(R_array, L_array)
     return R_sorted, L_sorted, sorted_indices, weights
 
 
