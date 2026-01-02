@@ -89,6 +89,11 @@ class BinTypeSelectionMethod(Enum):
     SLACK = "weighted slack"
 
 
+class JobTypeOrderingMethod(Enum):
+    SORT_LEX = "sort lex"
+    SORT_BY_WEIGHT = "sort by weight"
+
+
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
     arr = np.asarray(vec, dtype=float).reshape(-1)
     if arr.shape[0] != length:
@@ -169,6 +174,39 @@ def sort_items_by_weight(
     R_sorted = R_array[:, sorted_indices]
     L_sorted = L_array[sorted_indices]
     return R_sorted, L_sorted, sorted_indices
+
+
+def _sort_job_types(
+    R: np.ndarray,
+    L: np.ndarray,
+    ordering_method: JobTypeOrderingMethod,
+    weights: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
+    if ordering_method == JobTypeOrderingMethod.SORT_LEX:
+        R_sorted, L_sorted, sorted_indices = _sort_items_decreasing(R, L)
+        return R_sorted, L_sorted, sorted_indices, weights
+
+    if ordering_method == JobTypeOrderingMethod.SORT_BY_WEIGHT:
+        R_array = np.asarray(R, dtype=float)
+        if R_array.ndim != 2:
+            raise ValueError("R must be a 2D matrix.")
+
+        weight_vec = (
+            np.ones(R_array.shape[0], dtype=float)
+            if weights is None
+            else np.asarray(weights, dtype=float).reshape(-1)
+        )
+        if weight_vec.shape[0] != R_array.shape[0]:
+            raise ValueError(
+                f"weights must have length {R_array.shape[0]}, got {weight_vec.shape[0]}."
+            )
+
+        R_sorted, L_sorted, sorted_indices = sort_items_by_weight(
+            R_array, L, weight_vec
+        )
+        return R_sorted, L_sorted, sorted_indices, weight_vec
+
+    raise ValueError(f"Unknown job ordering method: {ordering_method!r}")
 
 
 def _select_bin_type_marginal_cost(
@@ -469,7 +507,9 @@ def first_fit(
             else np.asarray(weights, dtype=float).reshape(-1)
         )
         if weight_vec.shape[0] != K:
-            raise ValueError(f"weights must have length {K}, got {weight_vec.shape[0]}.")
+            raise ValueError(
+                f"weights must have length {K}, got {weight_vec.shape[0]}."
+            )
 
     opened_bins_vec = (
         np.zeros(M, dtype=int)
@@ -598,6 +638,51 @@ def first_fit(
     return BinPackingResult(total_cost=total_cost, bins=bins)
 
 
+def first_fit_sorted(
+    C: np.ndarray,
+    R: np.ndarray,
+    purchase_costs: np.ndarray,
+    opening_costs: np.ndarray,
+    L: np.ndarray,
+    selection_method: BinTypeSelectionMethod,
+    job_ordering_method: JobTypeOrderingMethod,
+    weights: np.ndarray | None = None,
+    opened_bins: np.ndarray | Sequence[int] | None = None,
+    purchased_bins: np.ndarray | Sequence[int] | None = None,
+) -> BinPackingResult:
+    """
+    Run first-fit after ordering job types according to ``job_ordering_method``.
+
+    When using the weighted ordering rule, ``weights`` controls the ordering score and
+    is also forwarded to the SLACK bin selection method.
+    """
+
+    R_sorted, L_sorted, sorted_indices, weight_vec = _sort_job_types(
+        R, L, ordering_method=job_ordering_method, weights=weights
+    )
+    J = R_sorted.shape[1]
+
+    result = first_fit(
+        C,
+        R_sorted,
+        purchase_costs,
+        opening_costs,
+        L_sorted,
+        opened_bins=opened_bins,
+        purchased_bins=purchased_bins,
+        selection_method=selection_method,
+        weights=weight_vec,
+    )
+
+    if J > 0:
+        inverse_perm = np.empty_like(sorted_indices)
+        inverse_perm[sorted_indices] = np.arange(J)
+        for bin_info in result.bins:
+            bin_info.item_counts = bin_info.item_counts[inverse_perm]
+
+    return result
+
+
 def first_fit_decreasing(
     C: np.ndarray,
     R: np.ndarray,
@@ -620,29 +705,18 @@ def first_fit_decreasing(
     Parameters mirror :func:`first_fit`; ``opened_bins``, ``purchased_bins``, and
     ``selection_method`` are forwarded directly without modification.
     """
-
-    R_sorted, L_sorted, sorted_indices = _sort_items_decreasing(R, L)
-    J = R_sorted.shape[1]
-
-    result = first_fit(
+    return first_fit_sorted(
         C,
-        R_sorted,
+        R,
         purchase_costs,
         opening_costs,
-        L_sorted,
+        L,
+        selection_method=selection_method,
+        job_ordering_method=JobTypeOrderingMethod.SORT_LEX,
+        weights=weights,
         opened_bins=opened_bins,
         purchased_bins=purchased_bins,
-        selection_method=selection_method,
-        weights=weights,
     )
-
-    if J > 0:
-        inverse_perm = np.empty_like(sorted_indices)
-        inverse_perm[sorted_indices] = np.arange(J)
-        for bin_info in result.bins:
-            bin_info.item_counts = bin_info.item_counts[inverse_perm]
-
-    return result
 
 
 def ffd_weighted_sort(
@@ -664,43 +738,18 @@ def ffd_weighted_sort(
     ordered using the weighted-demand rule from the best-fit heuristic. The same
     weights are reused for the SLACK bin selection method.
     """
-
-    R_array = np.asarray(R, dtype=float)
-    if R_array.ndim != 2:
-        raise ValueError("R must be a 2D matrix.")
-
-    weight_vec = (
-        np.ones(R_array.shape[0], dtype=float)
-        if weights is None
-        else np.asarray(weights, dtype=float).reshape(-1)
-    )
-    if weight_vec.shape[0] != R_array.shape[0]:
-        raise ValueError(
-            f"weights must have length {R_array.shape[0]}, got {weight_vec.shape[0]}."
-        )
-
-    R_sorted, L_sorted, sorted_indices = sort_items_by_weight(R_array, L, weight_vec)
-    J = R_sorted.shape[1]
-
-    result = first_fit(
+    return first_fit_sorted(
         C,
-        R_sorted,
+        R,
         purchase_costs,
         opening_costs,
-        L_sorted,
+        L,
+        selection_method=selection_method,
+        job_ordering_method=JobTypeOrderingMethod.SORT_BY_WEIGHT,
+        weights=weights,
         opened_bins=opened_bins,
         purchased_bins=purchased_bins,
-        selection_method=selection_method,
-        weights=weight_vec,
     )
-
-    if J > 0:
-        inverse_perm = np.empty_like(sorted_indices)
-        inverse_perm[sorted_indices] = np.arange(J)
-        for bin_info in result.bins:
-            bin_info.item_counts = bin_info.item_counts[inverse_perm]
-
-    return result
 
 
 def first_fit_largest(
