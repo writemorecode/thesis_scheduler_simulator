@@ -91,7 +91,10 @@ class BinTypeSelectionMethod(Enum):
 
 class JobTypeOrderingMethod(Enum):
     SORT_LEX = "sort lex"
+    SORT_DECREASING = "sort lex"
     SORT_BY_WEIGHT = "sort by weight"
+    SORT_SUM = "sort sum"
+    SORT_MAX = "sort max"
 
 
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
@@ -176,6 +179,55 @@ def sort_items_by_weight(
     return R_sorted, L_sorted, sorted_indices
 
 
+def sort_items_by_sum(R: np.ndarray, L: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sort item types by total demand (largest first)."""
+
+    R_array = np.asarray(R, dtype=float)
+    if R_array.ndim != 2:
+        raise ValueError("R must be a 2D matrix.")
+
+    L_array = np.asarray(L, dtype=int).reshape(-1)
+    if L_array.shape[0] != R_array.shape[1]:
+        raise ValueError(
+            f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
+        )
+    if np.any(L_array < 0):
+        raise ValueError("L entries must be non-negative.")
+
+    summed_sizes = np.sum(R_array, axis=0)
+    sorted_indices = np.argsort(-summed_sizes, kind="mergesort")
+
+    R_sorted = R_array[:, sorted_indices]
+    L_sorted = L_array[sorted_indices]
+    return R_sorted, L_sorted, sorted_indices
+
+
+def sort_items_by_max(R: np.ndarray, L: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sort item types by maximum single-resource demand (largest first)."""
+
+    R_array = np.asarray(R, dtype=float)
+    if R_array.ndim != 2:
+        raise ValueError("R must be a 2D matrix.")
+
+    L_array = np.asarray(L, dtype=int).reshape(-1)
+    if L_array.shape[0] != R_array.shape[1]:
+        raise ValueError(
+            f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
+        )
+    if np.any(L_array < 0):
+        raise ValueError("L entries must be non-negative.")
+
+    if R_array.shape[0] == 0:
+        max_sizes = np.zeros(R_array.shape[1], dtype=float)
+    else:
+        max_sizes = np.max(R_array, axis=0)
+    sorted_indices = np.argsort(-max_sizes, kind="mergesort")
+
+    R_sorted = R_array[:, sorted_indices]
+    L_sorted = L_array[sorted_indices]
+    return R_sorted, L_sorted, sorted_indices
+
+
 def _sort_job_types(
     R: np.ndarray,
     L: np.ndarray,
@@ -205,6 +257,14 @@ def _sort_job_types(
             R_array, L, weight_vec
         )
         return R_sorted, L_sorted, sorted_indices, weight_vec
+
+    if ordering_method == JobTypeOrderingMethod.SORT_SUM:
+        R_sorted, L_sorted, sorted_indices = sort_items_by_sum(R, L)
+        return R_sorted, L_sorted, sorted_indices, weights
+
+    if ordering_method == JobTypeOrderingMethod.SORT_MAX:
+        R_sorted, L_sorted, sorted_indices = sort_items_by_max(R, L)
+        return R_sorted, L_sorted, sorted_indices, weights
 
     raise ValueError(f"Unknown job ordering method: {ordering_method!r}")
 

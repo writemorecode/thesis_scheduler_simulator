@@ -15,7 +15,7 @@ from algorithms import (
     ffd_weighted_sort_schedule,
 )
 from best_fit import bfd_schedule
-from packing import BinTypeSelectionMethod
+from packing import BinTypeSelectionMethod, JobTypeOrderingMethod
 from problem_generation import ProblemInstance
 from ruin_recreate import ruin_recreate_schedule
 from simple_scheduler import simple_scheduler
@@ -125,6 +125,28 @@ def _build_scheduler(
 
         return _ffd
 
+    if normalized in {"ffd_sum"}:
+
+        def _ffd(problem: ProblemInstance) -> ScheduleResult:
+            return ffd_schedule(
+                problem,
+                BinTypeSelectionMethod.MARGINAL_COST,
+                job_ordering_method=JobTypeOrderingMethod.SORT_SUM,
+            )
+
+        return _ffd
+
+    if normalized in {"ffd_max"}:
+
+        def _ffd(problem: ProblemInstance) -> ScheduleResult:
+            return ffd_schedule(
+                problem,
+                BinTypeSelectionMethod.MARGINAL_COST,
+                job_ordering_method=JobTypeOrderingMethod.SORT_MAX,
+            )
+
+        return _ffd
+
     if normalized in {"simple"}:
         return lambda problem: simple_scheduler(problem, max_iterations=iterations)
 
@@ -134,7 +156,7 @@ def _build_scheduler(
     raise ValueError(
         "Unknown scheduler "
         f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, "
-        "ffd_weighted_sort, simple_scheduler, bfdw."
+        "ffd_weighted_sort, ffd_sum, ffd_max, simple_scheduler, bfdw."
     )
 
 
@@ -254,7 +276,10 @@ def parse_args() -> argparse.Namespace:
         "--scheduler",
         type=str,
         default="ruin_recreate",
-        help="Scheduler to run (ruin_recreate | ffd | ffdl | ffds | ffd_weighted_sort).",
+        help=(
+            "Scheduler to run (ruin_recreate | ffd | ffdl | ffds | "
+            "ffd_weighted_sort | ffd_sum | ffd_max)."
+        ),
     )
     parser.add_argument(
         "--iterations",
