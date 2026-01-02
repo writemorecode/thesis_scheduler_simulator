@@ -436,7 +436,7 @@ def build_time_slot_solution(
 def ffd_schedule(
     problem: ProblemInstance,
     bin_selection_method: BinTypeSelectionMethod,
-    job_ordering_method: JobTypeOrderingMethod = JobTypeOrderingMethod.SORT_DECREASING,
+    job_ordering_method: JobTypeOrderingMethod = JobTypeOrderingMethod.SORT_LEX,
 ) -> ScheduleResult:
     """
     Build a multi-slot schedule by running FFD independently per slot.

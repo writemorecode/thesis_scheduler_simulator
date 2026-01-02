@@ -91,7 +91,6 @@ class BinTypeSelectionMethod(Enum):
 
 class JobTypeOrderingMethod(Enum):
     SORT_LEX = "sort lex"
-    SORT_DECREASING = "sort lex"
     SORT_BY_WEIGHT = "sort by weight"
     SORT_SUM = "sort sum"
     SORT_MAX = "sort max"
@@ -115,11 +114,7 @@ def _prepare_count_vector(
     return arr
 
 
-def _sort_items_decreasing(
-    R: np.ndarray, L: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Sort items in non-increasing lexicographic order of demand."""
-
+def _prepare_sort_inputs(R: np.ndarray, L: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     R_array = np.asarray(R, dtype=float)
     if R_array.ndim != 2:
         raise ValueError("R must be a 2D matrix.")
@@ -131,6 +126,14 @@ def _sort_items_decreasing(
         )
     if np.any(L_array < 0):
         raise ValueError("L entries must be non-negative.")
+
+    return R_array, L_array
+
+
+def _sort_items_decreasing_prepared(
+    R_array: np.ndarray, L_array: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sort items in non-increasing lexicographic order of demand."""
 
     _, J = R_array.shape
     if J == 0:
@@ -148,29 +151,18 @@ def _sort_items_decreasing(
     return R_sorted, L_sorted, sorted_indices
 
 
-def sort_items_by_weight(
-    R: np.ndarray, L: np.ndarray, weights: np.ndarray
+def _sort_items_decreasing(
+    R: np.ndarray, L: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Sort item types by weighted demand (largest first)."""
+    """Sort items in non-increasing lexicographic order of demand."""
 
-    R_array = np.asarray(R, dtype=float)
-    if R_array.ndim != 2:
-        raise ValueError("R must be a 2D matrix.")
+    R_array, L_array = _prepare_sort_inputs(R, L)
+    return _sort_items_decreasing_prepared(R_array, L_array)
 
-    L_array = np.asarray(L, dtype=int).reshape(-1)
-    if L_array.shape[0] != R_array.shape[1]:
-        raise ValueError(
-            f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
-        )
-    if np.any(L_array < 0):
-        raise ValueError("L entries must be non-negative.")
 
-    weight_vec = np.asarray(weights, dtype=float).reshape(-1)
-    if weight_vec.shape[0] != R_array.shape[0]:
-        raise ValueError(
-            f"weights must have length {R_array.shape[0]}, got {weight_vec.shape[0]}."
-        )
-
+def _sort_items_by_weight_prepared(
+    R_array: np.ndarray, L_array: np.ndarray, weight_vec: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     weighted_sizes = weight_vec @ R_array
     sorted_indices = np.argsort(-weighted_sizes, kind="mergesort")
 
@@ -179,21 +171,25 @@ def sort_items_by_weight(
     return R_sorted, L_sorted, sorted_indices
 
 
-def sort_items_by_sum(R: np.ndarray, L: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Sort item types by total demand (largest first)."""
+def sort_items_by_weight(
+    R: np.ndarray, L: np.ndarray, weights: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sort item types by weighted demand (largest first)."""
 
-    R_array = np.asarray(R, dtype=float)
-    if R_array.ndim != 2:
-        raise ValueError("R must be a 2D matrix.")
+    R_array, L_array = _prepare_sort_inputs(R, L)
 
-    L_array = np.asarray(L, dtype=int).reshape(-1)
-    if L_array.shape[0] != R_array.shape[1]:
+    weight_vec = np.asarray(weights, dtype=float).reshape(-1)
+    if weight_vec.shape[0] != R_array.shape[0]:
         raise ValueError(
-            f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
+            f"weights must have length {R_array.shape[0]}, got {weight_vec.shape[0]}."
         )
-    if np.any(L_array < 0):
-        raise ValueError("L entries must be non-negative.")
 
+    return _sort_items_by_weight_prepared(R_array, L_array, weight_vec)
+
+
+def _sort_items_by_sum_prepared(
+    R_array: np.ndarray, L_array: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     summed_sizes = np.sum(R_array, axis=0)
     sorted_indices = np.argsort(-summed_sizes, kind="mergesort")
 
@@ -202,21 +198,18 @@ def sort_items_by_sum(R: np.ndarray, L: np.ndarray) -> tuple[np.ndarray, np.ndar
     return R_sorted, L_sorted, sorted_indices
 
 
-def sort_items_by_max(R: np.ndarray, L: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Sort item types by maximum single-resource demand (largest first)."""
+def sort_items_by_sum(
+    R: np.ndarray, L: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sort item types by total demand (largest first)."""
 
-    R_array = np.asarray(R, dtype=float)
-    if R_array.ndim != 2:
-        raise ValueError("R must be a 2D matrix.")
+    R_array, L_array = _prepare_sort_inputs(R, L)
+    return _sort_items_by_sum_prepared(R_array, L_array)
 
-    L_array = np.asarray(L, dtype=int).reshape(-1)
-    if L_array.shape[0] != R_array.shape[1]:
-        raise ValueError(
-            f"L must have one entry per item type. Expected {R_array.shape[1]}, got {L_array.shape[0]}."
-        )
-    if np.any(L_array < 0):
-        raise ValueError("L entries must be non-negative.")
 
+def _sort_items_by_max_prepared(
+    R_array: np.ndarray, L_array: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     if R_array.shape[0] == 0:
         max_sizes = np.zeros(R_array.shape[1], dtype=float)
     else:
@@ -228,21 +221,38 @@ def sort_items_by_max(R: np.ndarray, L: np.ndarray) -> tuple[np.ndarray, np.ndar
     return R_sorted, L_sorted, sorted_indices
 
 
+def sort_items_by_max(
+    R: np.ndarray, L: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sort item types by maximum single-resource demand (largest first)."""
+
+    R_array, L_array = _prepare_sort_inputs(R, L)
+    return _sort_items_by_max_prepared(R_array, L_array)
+
+
 def _sort_job_types(
     R: np.ndarray,
     L: np.ndarray,
     ordering_method: JobTypeOrderingMethod,
     weights: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
+    if ordering_method not in {
+        JobTypeOrderingMethod.SORT_LEX,
+        JobTypeOrderingMethod.SORT_BY_WEIGHT,
+        JobTypeOrderingMethod.SORT_SUM,
+        JobTypeOrderingMethod.SORT_MAX,
+    }:
+        raise ValueError(f"Unknown job ordering method: {ordering_method!r}")
+
+    R_array, L_array = _prepare_sort_inputs(R, L)
+
     if ordering_method == JobTypeOrderingMethod.SORT_LEX:
-        R_sorted, L_sorted, sorted_indices = _sort_items_decreasing(R, L)
+        R_sorted, L_sorted, sorted_indices = _sort_items_decreasing_prepared(
+            R_array, L_array
+        )
         return R_sorted, L_sorted, sorted_indices, weights
 
     if ordering_method == JobTypeOrderingMethod.SORT_BY_WEIGHT:
-        R_array = np.asarray(R, dtype=float)
-        if R_array.ndim != 2:
-            raise ValueError("R must be a 2D matrix.")
-
         weight_vec = (
             np.ones(R_array.shape[0], dtype=float)
             if weights is None
@@ -253,20 +263,19 @@ def _sort_job_types(
                 f"weights must have length {R_array.shape[0]}, got {weight_vec.shape[0]}."
             )
 
-        R_sorted, L_sorted, sorted_indices = sort_items_by_weight(
-            R_array, L, weight_vec
+        R_sorted, L_sorted, sorted_indices = _sort_items_by_weight_prepared(
+            R_array, L_array, weight_vec
         )
         return R_sorted, L_sorted, sorted_indices, weight_vec
 
     if ordering_method == JobTypeOrderingMethod.SORT_SUM:
-        R_sorted, L_sorted, sorted_indices = sort_items_by_sum(R, L)
+        R_sorted, L_sorted, sorted_indices = _sort_items_by_sum_prepared(
+            R_array, L_array
+        )
         return R_sorted, L_sorted, sorted_indices, weights
 
-    if ordering_method == JobTypeOrderingMethod.SORT_MAX:
-        R_sorted, L_sorted, sorted_indices = sort_items_by_max(R, L)
-        return R_sorted, L_sorted, sorted_indices, weights
-
-    raise ValueError(f"Unknown job ordering method: {ordering_method!r}")
+    R_sorted, L_sorted, sorted_indices = _sort_items_by_max_prepared(R_array, L_array)
+    return R_sorted, L_sorted, sorted_indices, weights
 
 
 def _select_bin_type_marginal_cost(
