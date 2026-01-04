@@ -104,21 +104,21 @@ def _build_scheduler(
 
         return _ffd
 
-    if normalized in {"ffdl", "first_fit_decreasing_largest"}:
+    if normalized in {"ffdl", "ffd_largest"}:
 
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
             return ffd_schedule(problem, BinTypeSelectionMethod.LARGEST)
 
         return _ffd
 
-    if normalized in {"ffds", "first_fit_decreasing_smallest"}:
+    if normalized in {"ffds", "ffd_smallest"}:
 
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
             return ffd_schedule(problem, BinTypeSelectionMethod.SMALLEST)
 
         return _ffd
 
-    if normalized in {"ffdws", "ffd_weighted_sort"}:
+    if normalized in {"ffdws", "ffd_new"}:
 
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
             return ffd_weighted_sort_schedule(problem, BinTypeSelectionMethod.SLACK)
@@ -158,16 +158,16 @@ def _build_scheduler(
 
         return _ffd
 
-    if normalized in {"simple"}:
+    if normalized in {"ffd_with_repack"}:
         return lambda problem: simple_scheduler(problem, max_iterations=iterations)
 
-    if normalized in {"bfdw", "bfdw_algorithm", "bfdw_weighted_best_fit"}:
+    if normalized in {"bfd"}:
         return bfd_schedule
 
     raise ValueError(
         "Unknown scheduler "
         f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, "
-        "ffd_weighted_sort, ffd_sum, ffd_max, ffd_prod, simple_scheduler, bfdw."
+        "ffd_new, ffd_sum, ffd_max, ffd_prod, simple_scheduler, bfd."
     )
 
 
@@ -233,6 +233,7 @@ def evaluate_dataset(
             )
 
     if rows:
+        output_csv.parent.mkdir(parents=True, exist_ok=True)
         with output_csv.open("w", newline="") as handle:
             writer = csv.DictWriter(
                 handle,
