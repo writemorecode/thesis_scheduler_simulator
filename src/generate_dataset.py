@@ -72,6 +72,12 @@ def parse_args():
         default=200,
         help="Maximum value for T range.",
     )
+    parser.add_argument(
+        "--output-dir",
+        dest="output_dir",
+        default="dataset",
+        help="Output directory for the generated dataset.",
+    )
     args = parser.parse_args()
     return args
 
@@ -87,8 +93,8 @@ def generate_instances(args, rng: np.random.Generator):
     )
 
 
-def write_instances(instances):
-    return write_dataset(instances)
+def write_instances(instances, output_dir: str):
+    return write_dataset(instances, dataset_dir=output_dir)
 
 
 def main():
@@ -99,7 +105,7 @@ def main():
     rng = np.random.default_rng(seed)
 
     instances = generate_instances(args, rng)
-    _ = write_instances(instances)
+    _ = write_instances(instances, args.output_dir)
 
 
 if __name__ == "__main__":
