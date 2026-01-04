@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,17 @@ class ProblemInstance:
     resource_weights: np.ndarray  # shape: (K,)
 
 
+@dataclass(frozen=True)
+class DatasetInstance:
+    """Pair a generated instance with its sampled dimensions."""
+
+    instance: ProblemInstance
+    K: int
+    J: int
+    M: int
+    T: int
+
+
 def _validate_ratio(name: str, value: float) -> None:
     if not (0.0 <= value <= 1.0):
         raise ValueError(f"{name} must be in [0, 1], got {value}.")
@@ -32,6 +44,15 @@ def _validate_range(name: str, bounds: tuple[float, float]) -> tuple[float, floa
             f"{name} must have positive bounds with low <= high, got {bounds}."
         )
     return low, high
+
+
+def _sample_dimension(
+    rng: np.random.Generator, bounds: tuple[int, int], name: str
+) -> int:
+    low, high = bounds
+    if low <= 0 or high < low:
+        raise ValueError(f"{name} must be positive with low <= high.")
+    return int(rng.integers(low, high + 1))
 
 
 def _choose_primary_resources(
@@ -368,6 +389,105 @@ def generate_random_instance(
     )
 
 
+def generate_dataset_instances(
+    num_instances: int,
+    *,
+    K_range: tuple[int, int],
+    J_range: tuple[int, int],
+    M_range: tuple[int, int],
+    T_range: tuple[int, int],
+    rng: np.random.Generator,
+) -> list[DatasetInstance]:
+    """
+    Generate a dataset of random problem instances without persisting them.
+
+    Each instance samples K, J, M, and T uniformly within the provided ranges,
+    then forwards those values to ``generate_random_instance``.
+    """
+
+    if num_instances <= 0:
+        raise ValueError("num_instances must be a positive integer.")
+
+    instances: list[DatasetInstance] = []
+
+    for _ in range(num_instances):
+        K = _sample_dimension(rng, K_range, "K_range")
+        J = _sample_dimension(rng, J_range, "J_range")
+        M = _sample_dimension(rng, M_range, "M_range")
+        T = _sample_dimension(rng, T_range, "T_range")
+
+        instance = generate_random_instance(
+            K=K,
+            J=J,
+            M=M,
+            T=T,
+            rng=rng,
+        )
+
+        instances.append(
+            DatasetInstance(
+                instance=instance,
+                K=K,
+                J=J,
+                M=M,
+                T=T,
+            )
+        )
+
+    return instances
+
+
+def write_dataset(
+    instances: Iterable[DatasetInstance],
+    *,
+    dataset_dir: str | Path = "dataset",
+) -> list[dict[str, int | str]]:
+    """Write a dataset of generated instances to disk."""
+
+    dataset_path = Path(dataset_dir)
+    dataset_path.mkdir(parents=True, exist_ok=True)
+
+    metadata: list[dict[str, int | str]] = []
+
+    for idx, entry in enumerate(instances):
+        filename = f"instance_{idx:04d}.npz"
+        file_path = dataset_path / filename
+
+        instance = entry.instance
+
+        np.savez(
+            file_path,
+            capacities=instance.capacities,
+            requirements=instance.requirements,
+            job_counts=instance.job_counts,
+            purchase_costs=instance.purchase_costs,
+            running_costs=instance.running_costs,
+            resource_weights=instance.resource_weights,
+            K=entry.K,
+            J=entry.J,
+            M=entry.M,
+            T=entry.T,
+        )
+
+        metadata.append(
+            {
+                "filename": filename,
+                "K": entry.K,
+                "J": entry.J,
+                "M": entry.M,
+                "T": entry.T,
+            }
+        )
+
+    csv_path = dataset_path / "dataset.csv"
+    with csv_path.open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=["filename", "K", "J", "M", "T"])
+        writer.writeheader()
+        writer.writerows(metadata)
+
+    return metadata
+
+
 def generate_dataset(
     num_instances: int,
     *,
@@ -381,71 +501,15 @@ def generate_dataset(
     """
     Generate a dataset of random problem instances and store them on disk.
 
-    Each instance samples K, J, M, and T uniformly within the provided ranges,
-    then forwards those values to ``generate_random_instance``.
-
     Returns a list of metadata rows that also get written to ``dataset/dataset.csv``.
     """
 
-    if num_instances <= 0:
-        raise ValueError("num_instances must be a positive integer.")
-
-    def _sample_dimension(bounds: tuple[int, int], name: str) -> int:
-        low, high = bounds
-        if low <= 0 or high < low:
-            raise ValueError(f"{name} must be positive with low <= high.")
-        return int(rng.integers(low, high + 1))
-
-    dataset_path = Path(dataset_dir)
-    dataset_path.mkdir(parents=True, exist_ok=True)
-
-    metadata: list[dict[str, int | str]] = []
-
-    for idx in range(num_instances):
-        K = _sample_dimension(K_range, "K_range")
-        J = _sample_dimension(J_range, "J_range")
-        M = _sample_dimension(M_range, "M_range")
-        T = _sample_dimension(T_range, "T_range")
-
-        instance = generate_random_instance(
-            K=K,
-            J=J,
-            M=M,
-            T=T,
-            rng=rng,
-        )
-
-        filename = f"instance_{idx:04d}.npz"
-        file_path = dataset_path / filename
-
-        np.savez(
-            file_path,
-            capacities=instance.capacities,
-            requirements=instance.requirements,
-            job_counts=instance.job_counts,
-            purchase_costs=instance.purchase_costs,
-            running_costs=instance.running_costs,
-            resource_weights=instance.resource_weights,
-            K=K,
-            J=J,
-            M=M,
-            T=T,
-        )
-
-        metadata.append(
-            {
-                "filename": filename,
-                "K": K,
-                "J": J,
-                "M": M,
-                "T": T,
-            }
-        )
-
-    csv_path = dataset_path / "dataset.csv"
-    with csv_path.open("w", newline="") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=["filename", "K", "J", "M", "T"])
-        writer.writeheader()
-        writer.writerows(metadata)
-
-    return metadata
+    instances = generate_dataset_instances(
+        num_instances,
+        K_range=K_range,
+        J_range=J_range,
+        M_range=M_range,
+        T_range=T_range,
+        rng=rng,
+    )
+    return write_dataset(instances, dataset_dir=dataset_dir)

@@ -4,7 +4,7 @@ import argparse
 
 import numpy as np
 
-from problem_generation import generate_dataset
+from problem_generation import generate_dataset_instances, write_dataset
 
 
 def parse_args():
@@ -76,6 +76,21 @@ def parse_args():
     return args
 
 
+def generate_instances(args, rng: np.random.Generator):
+    return generate_dataset_instances(
+        num_instances=100,
+        K_range=(args.K_min, args.K_max),
+        J_range=(args.J_min, args.J_max),
+        M_range=(args.M_min, args.M_max),
+        T_range=(args.T_min, args.T_max),
+        rng=rng,
+    )
+
+
+def write_instances(instances):
+    return write_dataset(instances)
+
+
 def main():
     args = parse_args()
 
@@ -83,14 +98,8 @@ def main():
     print(f"SEED: {seed}")
     rng = np.random.default_rng(seed)
 
-    _ = generate_dataset(
-        K_range=(args.K_min, args.K_max),
-        J_range=(args.J_min, args.J_max),
-        M_range=(args.M_min, args.M_max),
-        T_range=(args.T_min, args.T_max),
-        num_instances=100,
-        rng=rng,
-    )
+    instances = generate_instances(args, rng)
+    _ = write_instances(instances)
 
 
 if __name__ == "__main__":
