@@ -254,7 +254,7 @@ def evaluate_dataset(
     return rows
 
 
-def _print_summary(rows: list[dict[str, object]]) -> None:
+def _print_summary(rows: list[dict[str, object]], scheduler_name: str) -> None:
     if not rows:
         print("No instances were evaluated.")
         return
@@ -264,6 +264,7 @@ def _print_summary(rows: list[dict[str, object]]) -> None:
     machine_counts = np.array([row["total_machines"] for row in rows], dtype=int)
 
     print(
+        f"Scheduler: '{scheduler_name}'"
         "\nDataset summary:"
         f"\n  Instances: {len(rows)}"
         f"\n  Avg cost: {costs.mean():.4f}"
@@ -341,7 +342,7 @@ def main() -> None:
         validate=args.validate,
         verbose=args.verbose,
     )
-    _print_summary(rows)
+    _print_summary(rows, args.scheduler)
 
 
 if __name__ == "__main__":
