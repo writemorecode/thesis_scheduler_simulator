@@ -6,33 +6,37 @@ from pathlib import Path
 
 import numpy as np
 
-from eval import _build_scheduler, _dataset_entries, run_on_instance
+from eval_utils import (
+    normalize_scheduler_name,
+    parse_scheduler_list,
+    scheduler_output_filename,
+)
 
 
-def _parse_schedulers(value: str) -> list[str]:
-    return [item.strip() for item in value.split(",") if item.strip()]
+def _discover_results(results_dir: Path) -> dict[str, Path]:
+    results: dict[str, Path] = {}
+    for path in sorted(results_dir.glob("eval_*.csv")):
+        if not path.is_file():
+            continue
+        name = path.stem
+        if name.startswith("eval_"):
+            name = name[5:]
+        results[name] = path
+    return results
 
 
-def _evaluate_scheduler(
-    entries: list[tuple[Path, dict[str, int]]],
-    scheduler_name: str,
-    *,
-    iterations: int,
-    seed: int | None,
-    validate: bool,
-    verbose: bool,
+def _summarize_scheduler(
+    scheduler_name: str, csv_path: Path, *, verbose: bool
 ) -> dict[str, object] | None:
-    rng = np.random.default_rng(seed)
-    scheduler_fn = _build_scheduler(scheduler_name, iterations=iterations, rng=rng)
-
     costs: list[float] = []
     runtimes: list[float] = []
     machine_counts: list[int] = []
-    for npz_path, _dims in entries:
-        result = run_on_instance(npz_path, scheduler_fn, validate=validate)
-        costs.append(result.total_cost)
-        runtimes.append(result.runtime_sec)
-        machine_counts.append(result.total_machines)
+    with csv_path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            costs.append(float(row["total_cost"]))
+            runtimes.append(float(row["runtime_sec"]))
+            machine_counts.append(int(row["total_machines"]))
 
     if not costs:
         return None
@@ -61,34 +65,27 @@ def _evaluate_scheduler(
     return row
 
 
-def evaluate_schedulers(
-    dataset_dir: Path,
-    scheduler_names: list[str],
-    *,
-    iterations: int,
-    limit: int | None,
-    seed: int | None,
-    validate: bool,
-    verbose: bool,
+def evaluate_summaries(
+    results_dir: Path, scheduler_names: list[str] | None, *, verbose: bool
 ) -> list[dict[str, object]]:
-    entries = list(_dataset_entries(dataset_dir))
-    if limit is not None:
-        entries = entries[:limit]
-
-    if not entries:
-        return []
+    if scheduler_names:
+        results: dict[str, Path] = {}
+        for name in scheduler_names:
+            canonical = normalize_scheduler_name(name)
+            if canonical in results:
+                raise ValueError(f"Duplicate scheduler '{canonical}' in list.")
+            csv_path = results_dir / scheduler_output_filename(canonical)
+            results[canonical] = csv_path
+    else:
+        results = _discover_results(results_dir)
 
     rows: list[dict[str, object]] = []
-    for idx, scheduler_name in enumerate(scheduler_names):
-        scheduler_seed = None if seed is None else seed + idx
-        row = _evaluate_scheduler(
-            entries,
-            scheduler_name,
-            iterations=iterations,
-            seed=scheduler_seed,
-            validate=validate,
-            verbose=verbose,
-        )
+    for scheduler_name, csv_path in results.items():
+        if not csv_path.is_file():
+            raise FileNotFoundError(
+                f"Missing results file for {scheduler_name}: {csv_path}"
+            )
+        row = _summarize_scheduler(scheduler_name, csv_path=csv_path, verbose=verbose)
         if row is not None:
             rows.append(row)
 
@@ -97,48 +94,25 @@ def evaluate_schedulers(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate multiple schedulers on a dataset and write summary CSV."
+        description="Summarize per-scheduler results from raw per-instance CSVs."
     )
     parser.add_argument(
-        "--dataset",
+        "--results-dir",
         type=Path,
-        default=Path("dataset"),
-        help="Directory containing dataset.csv and NPZ instances.",
+        default=Path("eval_results"),
+        help="Directory containing per-scheduler CSVs.",
     )
     parser.add_argument(
         "--schedulers",
         type=str,
-        default="ruin_recreate",
-        help="Comma-separated list of scheduler names.",
-    )
-    parser.add_argument(
-        "--iterations",
-        type=int,
-        default=50,
-        help="Number of iterations (used by ruin_recreate).",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
         default=None,
-        help="Optional cap on how many instances to evaluate.",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Base seed for scheduler RNG (offset per scheduler).",
+        help="Optional comma-separated list of scheduler names.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("dataset") / "eval_summary.csv",
+        default=Path("eval_summary_results.csv"),
         help="Where to write the per-scheduler summary CSV.",
-    )
-    parser.add_argument(
-        "--validate",
-        action="store_true",
-        help="Validate each schedule after solving (default: off).",
     )
     parser.add_argument(
         "--verbose",
@@ -150,17 +124,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    scheduler_names = _parse_schedulers(args.schedulers)
-    if not scheduler_names:
-        raise SystemExit("No schedulers specified. Use --schedulers a,b,c.")
+    scheduler_names = None
+    if args.schedulers:
+        scheduler_names = parse_scheduler_list(args.schedulers)
+        if not scheduler_names:
+            raise SystemExit("No schedulers specified. Use --schedulers a,b,c.")
 
-    rows = evaluate_schedulers(
-        dataset_dir=args.dataset,
+    rows = evaluate_summaries(
+        results_dir=args.results_dir,
         scheduler_names=scheduler_names,
-        iterations=args.iterations,
-        limit=args.limit,
-        seed=args.seed,
-        validate=args.validate,
         verbose=args.verbose,
     )
 

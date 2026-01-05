@@ -9,16 +9,14 @@ from pathlib import Path
 
 import numpy as np
 
-from algorithms import (
-    ScheduleResult,
-    ffd_schedule,
-    ffd_weighted_sort_schedule,
+from algorithms import ScheduleResult
+from eval_utils import (
+    build_scheduler,
+    normalize_scheduler_name,
+    parse_scheduler_list,
+    scheduler_output_filename,
 )
-from best_fit import bfd_schedule
-from packing import BinTypeSelectionMethod, JobTypeOrderingMethod
 from problem_generation import ProblemInstance
-from ruin_recreate import ruin_recreate_schedule
-from simple_scheduler import simple_scheduler
 
 
 @dataclass
@@ -87,90 +85,6 @@ def _dataset_entries(dataset_dir: Path) -> Iterable[tuple[Path, dict[str, int]]]
         yield npz_path, _npz_dimensions(npz_path)
 
 
-def _build_scheduler(
-    name: str, *, iterations: int, rng: np.random.Generator
-) -> Callable[[ProblemInstance], ScheduleResult]:
-    normalized = name.lower().replace("-", "_")
-
-    if normalized in {"ruin_recreate", "rr"}:
-        return lambda problem: ruin_recreate_schedule(
-            problem, max_iterations=iterations, rng=rng
-        )
-
-    if normalized in {"ffd", "first_fit_decreasing"}:
-
-        def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(problem, BinTypeSelectionMethod.MARGINAL_COST)
-
-        return _ffd
-
-    if normalized in {"ffdl", "ffd_largest"}:
-
-        def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(problem, BinTypeSelectionMethod.LARGEST)
-
-        return _ffd
-
-    if normalized in {"ffds", "ffd_smallest"}:
-
-        def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(problem, BinTypeSelectionMethod.SMALLEST)
-
-        return _ffd
-
-    if normalized in {"ffdws", "ffd_new"}:
-
-        def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_weighted_sort_schedule(problem, BinTypeSelectionMethod.SLACK)
-
-        return _ffd
-
-    if normalized in {"ffd_sum"}:
-
-        def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(
-                problem,
-                BinTypeSelectionMethod.MARGINAL_COST,
-                job_ordering_method=JobTypeOrderingMethod.SORT_SUM,
-            )
-
-        return _ffd
-
-    if normalized in {"ffd_max"}:
-
-        def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(
-                problem,
-                BinTypeSelectionMethod.MARGINAL_COST,
-                job_ordering_method=JobTypeOrderingMethod.SORT_MAX,
-            )
-
-        return _ffd
-
-    if normalized in {"ffd_prod"}:
-
-        def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(
-                problem,
-                BinTypeSelectionMethod.MARGINAL_COST,
-                job_ordering_method=JobTypeOrderingMethod.SORT_PROD,
-            )
-
-        return _ffd
-
-    if normalized in {"ffd_with_repack"}:
-        return lambda problem: simple_scheduler(problem, max_iterations=iterations)
-
-    if normalized in {"bfd"}:
-        return bfd_schedule
-
-    raise ValueError(
-        "Unknown scheduler "
-        f"'{name}'. Expected one of: ruin_recreate, ffd, ffdl, ffds, "
-        "ffd_new, ffd_sum, ffd_max, ffd_prod, simple_scheduler, bfd."
-    )
-
-
 def run_on_instance(
     npz_path: Path,
     scheduler_fn: Callable[[ProblemInstance], ScheduleResult],
@@ -194,90 +108,89 @@ def run_on_instance(
     )
 
 
-def evaluate_dataset(
+def evaluate_schedulers(
     dataset_dir: Path,
-    scheduler_name: str,
+    scheduler_names: list[str],
     *,
     iterations: int,
     limit: int | None,
     seed: int | None,
-    output_csv: Path,
+    output_dir: Path,
     validate: bool,
     verbose: bool,
-) -> list[dict[str, object]]:
-    rng = np.random.default_rng(seed)
-    scheduler_fn = _build_scheduler(scheduler_name, iterations=iterations, rng=rng)
+) -> dict[str, list[dict[str, object]]]:
+    entries = list(_dataset_entries(dataset_dir))
+    if limit is not None:
+        entries = entries[:limit]
 
-    rows: list[dict[str, object]] = []
-    for idx, (npz_path, dims) in enumerate(_dataset_entries(dataset_dir)):
-        if limit is not None and idx >= limit:
-            break
+    if not entries:
+        return {}
 
-        result = run_on_instance(npz_path, scheduler_fn, validate=validate)
-        row = {
-            "filename": result.filename,
-            "K": dims["K"],
-            "J": dims["J"],
-            "M": dims["M"],
-            "T": dims["T"],
-            "total_cost": result.total_cost,
-            "total_machines": result.total_machines,
-            "runtime_sec": result.runtime_sec,
-            "machine_vector": " ".join(map(str, result.machine_vector.tolist())),
-        }
-        rows.append(row)
-        if verbose:
-            print(
-                f"{result.filename}: cost={result.total_cost:.4f}, "
-                f"machines={result.machine_vector}, runtime={result.runtime_sec:.3f}s"
-            )
+    canonical_names: list[str] = []
+    for name in scheduler_names:
+        canonical = normalize_scheduler_name(name)
+        if canonical in canonical_names:
+            raise ValueError(f"Duplicate scheduler '{canonical}' in list.")
+        canonical_names.append(canonical)
 
-    if rows:
-        output_csv.parent.mkdir(parents=True, exist_ok=True)
-        with output_csv.open("w", newline="") as handle:
-            writer = csv.DictWriter(
-                handle,
-                fieldnames=[
-                    "filename",
-                    "K",
-                    "J",
-                    "M",
-                    "T",
-                    "total_cost",
-                    "total_machines",
-                    "runtime_sec",
-                    "machine_vector",
-                ],
-            )
-            writer.writeheader()
-            writer.writerows(rows)
+    results: dict[str, list[dict[str, object]]] = {}
+    for idx, scheduler_name in enumerate(canonical_names):
+        scheduler_seed = None if seed is None else seed + idx
+        rng = np.random.default_rng(scheduler_seed)
+        scheduler_fn = build_scheduler(scheduler_name, iterations=iterations, rng=rng)
 
-    return rows
+        rows: list[dict[str, object]] = []
+        for npz_path, dims in entries:
+            result = run_on_instance(npz_path, scheduler_fn, validate=validate)
+            row = {
+                "filename": result.filename,
+                "K": dims["K"],
+                "J": dims["J"],
+                "M": dims["M"],
+                "T": dims["T"],
+                "total_cost": result.total_cost,
+                "total_machines": result.total_machines,
+                "runtime_sec": result.runtime_sec,
+                "machine_vector": " ".join(map(str, result.machine_vector.tolist())),
+            }
+            rows.append(row)
+            if verbose:
+                print(
+                    f"[{scheduler_name}] {result.filename}: "
+                    f"cost={result.total_cost:.4f}, "
+                    f"machines={result.machine_vector}, "
+                    f"runtime={result.runtime_sec:.3f}s"
+                )
 
+        if rows:
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_csv = output_dir / scheduler_output_filename(scheduler_name)
+            with output_csv.open("w", newline="") as handle:
+                writer = csv.DictWriter(
+                    handle,
+                    fieldnames=[
+                        "filename",
+                        "K",
+                        "J",
+                        "M",
+                        "T",
+                        "total_cost",
+                        "total_machines",
+                        "runtime_sec",
+                        "machine_vector",
+                    ],
+                )
+                writer.writeheader()
+                writer.writerows(rows)
 
-def _print_summary(rows: list[dict[str, object]], scheduler_name: str) -> None:
-    if not rows:
-        print("No instances were evaluated.")
-        return
+        results[scheduler_name] = rows
 
-    costs = np.array([row["total_cost"] for row in rows], dtype=float)
-    runtimes = np.array([row["runtime_sec"] for row in rows], dtype=float)
-    machine_counts = np.array([row["total_machines"] for row in rows], dtype=int)
-
-    print(
-        f"Scheduler: '{scheduler_name}'"
-        "\nDataset summary:"
-        f"\n  Instances: {len(rows)}"
-        f"\n  Avg cost: {costs.mean():.4f}"
-        f"\n  Min/Max cost: {costs.min():.4f} / {costs.max():.4f}"
-        f"\n  Avg machines: {machine_counts.mean():.2f}"
-        f"\n  Avg runtime: {runtimes.mean():.3f}s"
-    )
+    return results
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate a scheduler/packing algorithm on a dataset."
+        description="Run schedulers on a dataset and write per-instance CSVs."
     )
     parser.add_argument(
         "--dataset",
@@ -285,20 +198,27 @@ def parse_args() -> argparse.Namespace:
         default=Path("dataset"),
         help="Directory containing dataset.csv and NPZ instances.",
     )
-    parser.add_argument(
+    scheduler_group = parser.add_mutually_exclusive_group()
+    scheduler_group.add_argument(
         "--scheduler",
+        type=str,
+        help="Single scheduler name (deprecated; use --schedulers).",
+    )
+    scheduler_group.add_argument(
+        "--schedulers",
         type=str,
         default="ruin_recreate",
         help=(
-            "Scheduler to run (ruin_recreate | ffd | ffdl | ffds | "
-            "ffd_weighted_sort | ffd_sum | ffd_max | ffd_prod)."
+            "Comma-separated list of scheduler names "
+            "(ruin_recreate, ffd, ffd_largest, ffd_smallest, ffd_new, "
+            "ffd_sum, ffd_max, ffd_prod, ffd_with_repack, bfd)."
         ),
     )
     parser.add_argument(
         "--iterations",
         type=int,
         default=50,
-        help="Number of iterations (used by ruin_recreate).",
+        help="Number of iterations (used by ruin_recreate and ffd_with_repack).",
     )
     parser.add_argument(
         "--limit",
@@ -313,10 +233,10 @@ def parse_args() -> argparse.Namespace:
         help="Seed for the scheduler RNG.",
     )
     parser.add_argument(
-        "--output",
+        "--output-dir",
         type=Path,
-        default=Path("dataset") / "eval_results.csv",
-        help="Where to write the per-instance results CSV.",
+        default=Path("eval_results"),
+        help="Directory to write per-scheduler results CSVs.",
     )
     parser.add_argument(
         "--validate",
@@ -333,17 +253,26 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    rows = evaluate_dataset(
+
+    if args.scheduler:
+        scheduler_names = [args.scheduler]
+    else:
+        scheduler_names = parse_scheduler_list(args.schedulers)
+    if not scheduler_names:
+        raise SystemExit("No schedulers specified. Use --schedulers a,b,c.")
+
+    results = evaluate_schedulers(
         dataset_dir=args.dataset,
-        scheduler_name=args.scheduler,
+        scheduler_names=scheduler_names,
         iterations=args.iterations,
         limit=args.limit,
         seed=args.seed,
-        output_csv=args.output,
+        output_dir=args.output_dir,
         validate=args.validate,
         verbose=args.verbose,
     )
-    _print_summary(rows, args.scheduler)
+    if not results:
+        print("No instances were evaluated.")
 
 
 if __name__ == "__main__":

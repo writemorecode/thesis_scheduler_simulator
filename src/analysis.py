@@ -4,7 +4,8 @@ Analysis utilities for comparing algorithm performance results.
 Loads per-algorithm CSVs, joins them on ``filename``, computes pairwise log-ratios
 of ``total_cost``, and aggregates summary statistics. Designed for quick CLI use:
 
-    python -m src.analysis --results-dir results_eval
+    python -m src.analysis --results-dir eval_results
+    python -m src.analysis --schedulers ffd,ffd_largest
     python -m src.analysis eval_ffd.csv eval_ffd_largest.csv
 """
 
@@ -20,13 +21,11 @@ from statistics import NormalDist
 import numpy as np
 import polars as pl
 
-# Default mapping of algorithm identifiers to their CSV filenames.
-DEFAULT_ALG_FILES = {
-    "ffd": "eval_ffd.csv",
-    "ffd_largest": "eval_ffd_largest.csv",
-    "ffd_smallest": "eval_ffd_smallest.csv",
-    "best_fit_weighted": "eval_best_fit_weighted.csv",
-}
+from eval_utils import (
+    normalize_scheduler_name,
+    parse_scheduler_list,
+    scheduler_output_filename,
+)
 
 
 @dataclass(frozen=True)
@@ -78,12 +77,41 @@ def load_algorithm_results(
     return data
 
 
+def _discover_mapping(
+    results_dir: Path, scheduler_names: Iterable[str] | None
+) -> dict[str, str]:
+    if scheduler_names:
+        mapping: dict[str, str] = {}
+        for name in scheduler_names:
+            canonical = normalize_scheduler_name(name)
+            if canonical in mapping:
+                raise ValueError(f"Duplicate algorithm name derived from {name}")
+            filename = scheduler_output_filename(canonical)
+            path = results_dir / filename
+            if not path.is_file():
+                raise FileNotFoundError(f"Missing results file for {canonical}: {path}")
+            mapping[canonical] = filename
+        return mapping
+
+    mapping: dict[str, str] = {}
+    for path in sorted(results_dir.glob("eval_*.csv")):
+        if not path.is_file():
+            continue
+        name = path.stem[5:] if path.stem.startswith("eval_") else path.stem
+        if name in mapping:
+            raise ValueError(f"Duplicate algorithm name derived from {path}")
+        mapping[name] = path.name
+
+    if not mapping:
+        raise FileNotFoundError(f"No eval_*.csv files found in {results_dir}")
+    return mapping
+
+
 def _mapping_from_csv_paths(paths: Iterable[Path]) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for path in paths:
         stem = path.stem
         name = stem[5:] if stem.startswith("eval_") else stem
-        name = name.lower()
         if name in mapping:
             raise ValueError(f"Duplicate algorithm name derived from {path}")
         mapping[name] = path.name
@@ -169,11 +197,12 @@ def summarize_ratios(df: pl.DataFrame, ratio_columns: Iterable[str]) -> pl.DataF
 
 
 def run_analysis(
-    results_dir: Path = Path("results_eval"),
+    results_dir: Path = Path("eval_results"),
     mapping: dict[str, str] | None = None,
+    scheduler_names: Iterable[str] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Load results, compute log-ratios, and return (joined_df, summary_df)."""
-    mapping = mapping or DEFAULT_ALG_FILES
+    mapping = mapping or _discover_mapping(results_dir, scheduler_names)
     data = load_algorithm_results(results_dir, mapping)
     joined = join_on_filename(data)
     joined_with_log_ratios, log_ratio_cols = add_log_ratio_columns(
@@ -192,8 +221,14 @@ def main() -> None:
     parser.add_argument(
         "--results-dir",
         type=Path,
-        default=Path("results_eval"),
+        default=Path("eval_results"),
         help="Directory containing per-algorithm CSVs.",
+    )
+    parser.add_argument(
+        "--schedulers",
+        type=str,
+        default=None,
+        help="Optional comma-separated list of scheduler names.",
     )
     parser.add_argument(
         "csv_paths",
@@ -223,7 +258,14 @@ def main() -> None:
         results_dir = parents.pop()
         joined, summary = run_analysis(results_dir, mapping=mapping)
     else:
-        joined, summary = run_analysis(args.results_dir)
+        scheduler_names = None
+        if args.schedulers:
+            scheduler_names = parse_scheduler_list(args.schedulers)
+            if not scheduler_names:
+                raise SystemExit("No schedulers specified. Use --schedulers a,b,c.")
+        joined, summary = run_analysis(
+            args.results_dir, scheduler_names=scheduler_names
+        )
 
     print("\nJoined data sample (first 5 rows):")
     print(joined.head())

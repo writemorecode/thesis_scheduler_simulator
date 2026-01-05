@@ -18,3 +18,23 @@ The example in `main.py` demonstrates how to structure the input matrices:
   already open; their purchase + opening costs are charged immediately.
 
 Import `first_fit_decreasing` to use the simulator inside your own scripts.
+
+#### Evaluation Workflow
+
+1. Run schedulers and write raw per-instance results:
+
+```bash
+uv run python src/eval.py --dataset dataset --schedulers ruin_recreate,ffd,bfd --output-dir eval_results --seed 123
+```
+
+2. Summarize per-scheduler performance:
+
+```bash
+uv run python src/eval_multi_summary.py --results-dir eval_results --output eval_summary_results.csv
+```
+
+3. Statistical analysis on a subset of schedulers:
+
+```bash
+uv run python src/analysis.py --results-dir eval_results --schedulers ffd,ruin_recreate --export-summary eval_log_ratio_summary.csv
+```
