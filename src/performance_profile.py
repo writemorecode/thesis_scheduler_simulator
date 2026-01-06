@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
+import itertools
 import math
 from pathlib import Path
 
@@ -109,6 +111,89 @@ def compute_tau1_wins(
     return wins
 
 
+def _build_tau_values(max_ratio: float, num_points: int = 200) -> list[float]:
+    if max_ratio <= 1.0:
+        return [1.0]
+    if num_points < 2:
+        raise ValueError("num_points must be at least 2.")
+    log_min = 0.0
+    log_max = math.log10(max_ratio)
+    step = (log_max - log_min) / (num_points - 1)
+    return [0] + [10 ** (log_min + i * step) for i in range(num_points - 1)]
+
+
+def compute_performance_profiles(
+    costs_by_scheduler: dict[str, dict[str, float]],
+    filenames: list[str],
+    *,
+    num_points: int = 200,
+) -> tuple[list[float], dict[str, list[float]]]:
+    ratios_by_scheduler = {name: [] for name in costs_by_scheduler}
+    for filename in filenames:
+        instance_costs = {
+            name: costs[filename] for name, costs in costs_by_scheduler.items()
+        }
+        best_cost = min(instance_costs.values())
+        if best_cost <= 0:
+            raise ValueError(
+                f"Instance '{filename}' has non-positive best cost: {best_cost}."
+            )
+        for name, cost in instance_costs.items():
+            ratios_by_scheduler[name].append(cost / best_cost)
+
+    max_ratio = max(max(ratios) for ratios in ratios_by_scheduler.values())
+    tau_values = _build_tau_values(max_ratio, num_points=num_points)
+
+    profiles: dict[str, list[float]] = {}
+    for name, ratios in ratios_by_scheduler.items():
+        ratios_sorted = sorted(ratios)
+        counts = [
+            bisect.bisect_right(ratios_sorted, tau) / len(ratios_sorted)
+            for tau in tau_values
+        ]
+        profiles[name] = counts
+    return tau_values, profiles
+
+
+def _plot_performance_profiles(
+    tau_values: list[float],
+    profiles: dict[str, list[float]],
+    output_path: Path,
+) -> None:
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import ScalarFormatter
+
+    fig, ax = plt.subplots()
+    scheduler_names = sorted(profiles)
+    color_map = plt.get_cmap("tab20", max(len(scheduler_names), 1))
+    colors = [color_map(i) for i in range(len(scheduler_names))]
+    linestyles = itertools.cycle(["-", "--", "-.", ":"])
+    for name, color in zip(scheduler_names, colors):
+        linestyle = next(linestyles)
+        ax.plot(
+            tau_values,
+            profiles[name],
+            label=name,
+            color=color,
+            linestyle=linestyle,
+        )
+    ax.set_xscale("log")
+    ax.set_xlabel("log(Tau)")
+    ax.set_ylabel("Fraction of instances")
+    ax.set_title("Dolan-More Performance Profiles")
+    formatter = ScalarFormatter()
+    formatter.set_scientific(False)
+    formatter.set_useOffset(False)
+    ax.xaxis.set_major_formatter(formatter)
+    ax.grid(True, which="both", linestyle=":", linewidth=0.6)
+    ax.legend()
+    fig.tight_layout()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path)
+    plt.close(fig)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -150,6 +235,12 @@ def parse_args() -> argparse.Namespace:
         "--verbose",
         action="store_true",
         help="Print the computed win summary (default: off).",
+    )
+    parser.add_argument(
+        "--plot-filename",
+        type=Path,
+        default=None,
+        help="Optional plot output path for performance profile line plot.",
     )
     return parser.parse_args()
 
@@ -200,6 +291,13 @@ def main() -> None:
         )
         writer.writeheader()
         writer.writerows(rows)
+
+    if args.plot_filename:
+        tau_values, profiles = compute_performance_profiles(
+            costs_by_scheduler,
+            filenames,
+        )
+        _plot_performance_profiles(tau_values, profiles, args.plot_filename)
 
     if args.verbose:
         for row in rows:
