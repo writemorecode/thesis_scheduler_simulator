@@ -7,7 +7,7 @@ from algorithms import (
     ffd_schedule,
     repack_schedule,
 )
-from packing import BinTypeSelectionMethod
+from packing import BinTypeSelectionMethod, JobTypeOrderingMethod
 from problem_generation import ProblemInstance
 
 
@@ -41,35 +41,18 @@ def simple_scheduler(
     if c_p.shape[0] != M or c_r.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
-    # 1. Compute initial solution
     x_0 = ffd_schedule(
-        problem, bin_selection_method=BinTypeSelectionMethod.MARGINAL_COST
+        problem,
+        bin_selection_method=BinTypeSelectionMethod.SLACK,
+        job_ordering_method=JobTypeOrderingMethod.SORT_BY_WEIGHT,
     )
-    x = x_0
     x_best = x_0
-    iterations_since_improvement = 0
 
-    print(
-        f"Iteration {0}:\tCost:\t{x_best.total_cost:.4f}\tMachines:\t{x_best.machine_vector}"
+    x_repacked = repack_schedule(
+        x_0, C, R, c_p, c_r, resource_weights=problem.resource_weights
     )
-    it = 0
 
-    while iterations_since_improvement < 1:
-        it += 1
-        iterations_since_improvement += 1
-
-        x_repacked = repack_schedule(
-            x, C, R, c_p, c_r, resource_weights=problem.resource_weights
-        )
-
-        if x_repacked.total_cost < x_best.total_cost:
-            x_best = x_repacked
-            iterations_since_improvement = 0
-
-        x = x_repacked
-
-        print(
-            f"Iteration {it + 1}:\tCost: {x.total_cost:.4f}\tBest cost: {x_best.total_cost:.4f}\tMachines: {x.machine_vector}\tBest machines: {x_best.machine_vector}"
-        )
+    if x_repacked.total_cost < x_best.total_cost:
+        x_best = x_repacked
 
     return x_best
