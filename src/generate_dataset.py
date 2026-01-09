@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import csv
+from pathlib import Path
 
 import numpy as np
 
 from problem_generation import generate_dataset_instances, write_dataset
+
+
+NUM_INSTANCES = 100
 
 
 def parse_args():
@@ -84,7 +89,7 @@ def parse_args():
 
 def generate_instances(args, rng: np.random.Generator):
     return generate_dataset_instances(
-        num_instances=100,
+        num_instances=NUM_INSTANCES,
         K_range=(args.K_min, args.K_max),
         J_range=(args.J_min, args.J_max),
         M_range=(args.M_min, args.M_max),
@@ -97,15 +102,57 @@ def write_instances(instances, output_dir: str):
     return write_dataset(instances, dataset_dir=output_dir)
 
 
+def write_dataset_parameters_csv(args, *, output_dir: str) -> None:
+    dataset_path = Path(output_dir)
+    dataset_path.mkdir(parents=True, exist_ok=True)
+
+    csv_path = dataset_path / "dataset_parameters.csv"
+    parameters = {"num_instances": NUM_INSTANCES, **vars(args)}
+    preferred_order = [
+        "seed",
+        "num_instances",
+        "iterations",
+        "K_min",
+        "K_max",
+        "J_min",
+        "J_max",
+        "M_min",
+        "M_max",
+        "T_min",
+        "T_max",
+        "output_dir",
+    ]
+    rows: list[tuple[str, str]] = []
+    used: set[str] = set()
+
+    for key in preferred_order:
+        if key not in parameters:
+            continue
+        used.add(key)
+        value = parameters[key]
+        rows.append((key, "" if value is None else str(value)))
+
+    for key in sorted(parameters.keys() - used):
+        value = parameters[key]
+        rows.append((key, "" if value is None else str(value)))
+
+    with csv_path.open("w", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(["parameter", "value"])
+        writer.writerows(rows)
+
+
 def main():
     args = parse_args()
 
     seed = args.seed if args.seed is not None else np.random.randint(1_000_000)
+    args.seed = seed
     print(f"SEED: {seed}")
     rng = np.random.default_rng(seed)
 
     instances = generate_instances(args, rng)
     _ = write_instances(instances, args.output_dir)
+    write_dataset_parameters_csv(args, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":
