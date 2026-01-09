@@ -74,7 +74,7 @@ def _ensure_matching_instances(
     try:
         base_name, base_costs = next(iterator)
     except StopIteration:
-        raise ValueError("No schedulers provided.")
+        raise ValueError("No schedulers provided.") from None
     base_filenames = set(base_costs.keys())
     if not base_filenames:
         raise ValueError(f"No instances found for scheduler '{base_name}'.")
@@ -168,7 +168,7 @@ def _plot_performance_profiles(
     color_map = plt.get_cmap("tab20", max(len(scheduler_names), 1))
     colors = [color_map(i) for i in range(len(scheduler_names))]
     linestyles = itertools.cycle(["-", "--", "-.", ":"])
-    for name, color in zip(scheduler_names, colors):
+    for name, color in zip(scheduler_names, colors, strict=True):
         linestyle = next(linestyles)
         ax.plot(
             tau_values,

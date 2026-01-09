@@ -8,7 +8,6 @@ import numpy as np
 
 from problem_generation import generate_dataset_instances, write_dataset
 
-
 NUM_INSTANCES = 100
 
 
