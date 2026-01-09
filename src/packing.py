@@ -83,7 +83,7 @@ BinSelectionFn = Callable[[int, np.ndarray], int]
 
 
 class BinTypeSelectionMethod(Enum):
-    MARGINAL_COST = "marginal cost"
+    CHEAPEST = "cheapest"
     SLACK = "weighted slack"
 
 
@@ -447,7 +447,7 @@ def _select_bin_type(
     weights: np.ndarray | None = None,
     remaining_items: int = 1,
 ) -> tuple[int, bool]:
-    if selection_method == BinTypeSelectionMethod.MARGINAL_COST:
+    if selection_method == BinTypeSelectionMethod.CHEAPEST:
         return _select_bin_type_marginal_cost(
             item_type,
             demand,

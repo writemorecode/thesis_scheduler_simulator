@@ -15,7 +15,7 @@ from algorithms import (
     ffd_schedule,
     repack_schedule,
 )
-from packing import BinTypeSelectionMethod, first_fit_decreasing
+from packing import BinTypeSelectionMethod, JobTypeOrderingMethod, first_fit_decreasing
 from problem_generation import ProblemInstance
 
 MAX_FRACTION = 0.95
@@ -110,7 +110,8 @@ def _recreate_with_opened_bins(
             running_vec,
             L=job_counts,
             opened_bins=opened_bins,
-            selection_method=BinTypeSelectionMethod.MARGINAL_COST,
+            selection_method=BinTypeSelectionMethod.CHEAPEST,
+            job_ordering_method=JobTypeOrderingMethod.SORT_SUM,
         )
         recreated_slot = build_time_slot_solution(
             packing_result.bins,
@@ -370,9 +371,7 @@ def ruin_recreate_schedule(
         raise ValueError("Cost vectors must have one entry per machine type.")
 
     # 1. Compute initial solution
-    x_0 = ffd_schedule(
-        problem, bin_selection_method=BinTypeSelectionMethod.MARGINAL_COST
-    )
+    x_0 = ffd_schedule(problem, bin_selection_method=BinTypeSelectionMethod.CHEAPEST)
     x = x_0
     x_best = x_0
     iterations_since_improvement = 0

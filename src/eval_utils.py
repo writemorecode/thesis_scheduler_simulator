@@ -58,7 +58,7 @@ def build_scheduler(
     if canonical == "ffd":
 
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(problem, BinTypeSelectionMethod.MARGINAL_COST)
+            return ffd_schedule(problem, BinTypeSelectionMethod.CHEAPEST)
 
         return _ffd
 
@@ -74,7 +74,7 @@ def build_scheduler(
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
             return ffd_schedule(
                 problem,
-                BinTypeSelectionMethod.MARGINAL_COST,
+                BinTypeSelectionMethod.CHEAPEST,
                 job_ordering_method=JobTypeOrderingMethod.SORT_SUM,
             )
 
@@ -85,7 +85,7 @@ def build_scheduler(
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
             return ffd_schedule(
                 problem,
-                BinTypeSelectionMethod.MARGINAL_COST,
+                BinTypeSelectionMethod.CHEAPEST,
                 job_ordering_method=JobTypeOrderingMethod.SORT_MAX,
             )
 
@@ -96,7 +96,7 @@ def build_scheduler(
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
             return ffd_schedule(
                 problem,
-                BinTypeSelectionMethod.MARGINAL_COST,
+                BinTypeSelectionMethod.CHEAPEST,
                 job_ordering_method=JobTypeOrderingMethod.SORT_PROD,
             )
 
