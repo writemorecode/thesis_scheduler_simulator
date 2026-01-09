@@ -16,10 +16,6 @@ SCHEDULER_ALIASES: dict[str, str] = {
     "rr": "ruin_recreate",
     "ffd": "ffd",
     "first_fit_decreasing": "ffd",
-    "ffdl": "ffd_largest",
-    "ffd_largest": "ffd_largest",
-    "ffds": "ffd_smallest",
-    "ffd_smallest": "ffd_smallest",
     "ffdws": "ffd_new",
     "ffd_new": "ffd_new",
     "ffd_weighted_sort": "ffd_new",
@@ -63,20 +59,6 @@ def build_scheduler(
 
         def _ffd(problem: ProblemInstance) -> ScheduleResult:
             return ffd_schedule(problem, BinTypeSelectionMethod.MARGINAL_COST)
-
-        return _ffd
-
-    if canonical == "ffd_largest":
-
-        def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(problem, BinTypeSelectionMethod.LARGEST)
-
-        return _ffd
-
-    if canonical == "ffd_smallest":
-
-        def _ffd(problem: ProblemInstance) -> ScheduleResult:
-            return ffd_schedule(problem, BinTypeSelectionMethod.SMALLEST)
 
         return _ffd
 

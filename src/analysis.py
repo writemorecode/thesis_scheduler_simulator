@@ -5,8 +5,8 @@ Loads per-algorithm CSVs, joins them on ``filename``, computes pairwise log-rati
 of ``total_cost``, and aggregates summary statistics. Designed for quick CLI use:
 
     python -m src.analysis --results-dir eval_results
-    python -m src.analysis --schedulers ffd,ffd_largest
-    python -m src.analysis eval_ffd.csv eval_ffd_largest.csv
+    python -m src.analysis --schedulers ffd,ruin_recreate
+    python -m src.analysis eval_ffd.csv eval_ruin_recreate.csv
 """
 
 from __future__ import annotations

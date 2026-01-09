@@ -140,7 +140,7 @@ def _shake_remove_lowest_utilization_bins(
     rng: np.random.Generator,
 ) -> ScheduleResult:
     """
-    Remove bins with the most weighted remaining capacity and rebuild with FFDL.
+    Remove bins with the most weighted remaining capacity and rebuild with FFD.
     """
 
     def opened_bins_fn(
@@ -370,7 +370,9 @@ def ruin_recreate_schedule(
         raise ValueError("Cost vectors must have one entry per machine type.")
 
     # 1. Compute initial solution
-    x_0 = ffd_schedule(problem, bin_selection_method=BinTypeSelectionMethod.SMALLEST)
+    x_0 = ffd_schedule(
+        problem, bin_selection_method=BinTypeSelectionMethod.MARGINAL_COST
+    )
     x = x_0
     x_best = x_0
     iterations_since_improvement = 0

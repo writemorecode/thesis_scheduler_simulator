@@ -210,7 +210,7 @@ def parse_args() -> argparse.Namespace:
         default="ruin_recreate",
         help=(
             "Comma-separated list of scheduler names "
-            "(ruin_recreate, ffd, ffd_largest, ffd_smallest, ffd_new, "
+            "(ruin_recreate, ffd, ffd_new, "
             "ffd_sum, ffd_max, ffd_prod, ffd_with_repack, bfd)."
         ),
     )
