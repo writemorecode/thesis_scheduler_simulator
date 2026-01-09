@@ -319,7 +319,8 @@ def bfd_schedule(problem: ProblemInstance) -> ScheduleResult:
     if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
-    initial_purchased = np.zeros(M, dtype=int)
+    purchased_baseline = np.zeros(M, dtype=int)
+    purchased_bins = purchased_baseline.copy()
 
     time_slot_solutions = []
     machine_vector = np.zeros(M, dtype=int)
@@ -337,7 +338,7 @@ def bfd_schedule(problem: ProblemInstance) -> ScheduleResult:
                 purchase_costs=purchase_vec,
                 opening_costs=running_vec,
                 L=slot_jobs,
-                purchased_bins=initial_purchased,
+                purchased_bins=purchased_bins,
                 weights=resource_weights,
             )
             slot_solution = build_time_slot_solution(
@@ -347,14 +348,14 @@ def bfd_schedule(problem: ProblemInstance) -> ScheduleResult:
                 running_vec,
                 resource_weights=resource_weights,
             )
+            total_cost += float(packing_result.total_cost)
 
         time_slot_solutions.append(slot_solution)
         machine_vector = np.maximum(machine_vector, slot_solution.machine_counts)
-        total_cost += float(np.dot(running_vec, slot_solution.machine_counts))
 
     return ScheduleResult(
         total_cost=total_cost,
         machine_vector=machine_vector,
         time_slot_solutions=time_slot_solutions,
-        purchased_baseline=initial_purchased,
+        purchased_baseline=purchased_baseline,
     )
