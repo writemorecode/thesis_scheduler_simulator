@@ -479,8 +479,7 @@ def ffd_schedule(
     if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
-    purchased_baseline = np.zeros(M, dtype=int)
-    purchased_bins = purchased_baseline.copy()
+    initial_purchased = np.zeros(M, dtype=int)
 
     time_slot_solutions: list[TimeSlotSolution] = []
     machine_vector = np.zeros(M, dtype=int)
@@ -498,7 +497,7 @@ def ffd_schedule(
                 purchase_costs=purchase_vec,
                 opening_costs=running_vec,
                 L=slot_jobs,
-                purchased_bins=purchased_bins,
+                purchased_bins=initial_purchased,
                 selection_method=bin_selection_method,
                 job_ordering_method=job_ordering_method,
                 weights=resource_weights,
@@ -511,16 +510,16 @@ def ffd_schedule(
                 running_vec,
                 resource_weights=resource_weights,
             )
-            total_cost += float(ffd_result.total_cost)
 
         time_slot_solutions.append(slot_solution)
         machine_vector = np.maximum(machine_vector, slot_solution.machine_counts)
+        total_cost += float(np.dot(running_vec, slot_solution.machine_counts))
 
     return ScheduleResult(
         total_cost=total_cost,
         machine_vector=machine_vector,
         time_slot_solutions=time_slot_solutions,
-        purchased_baseline=purchased_baseline,
+        purchased_baseline=initial_purchased,
     )
 
 
@@ -616,11 +615,8 @@ def _maybe_downsize_bin(
         candidate_cost = float(running_costs[candidate_type])
         candidate_size = float(np.sum(candidate_capacity))
 
-        # Only accept candidates that are not worse on either axis.
-        cheaper_or_equal = candidate_cost <= current_cost
-        smaller_or_equal = candidate_size <= current_size
-        strictly_better = candidate_cost < current_cost or candidate_size < current_size
-        if not (cheaper_or_equal and smaller_or_equal and strictly_better):
+        # Require some improvement: either cheaper to run or strictly smaller.
+        if candidate_cost >= current_cost and candidate_size >= current_size:
             continue
 
         key = (candidate_cost, candidate_size)
@@ -645,8 +641,6 @@ def repack_jobs(
     requirements: np.ndarray,
     running_costs: np.ndarray,
     resource_weights: np.ndarray | None = None,
-    *,
-    allow_downsize: bool = False,
 ) -> TimeSlotSolution:
     """
     Heuristic job re-packing as described in ``method.typ``.
@@ -694,7 +688,7 @@ def repack_jobs(
     ]
 
     _refresh_bin_utilization(bins)
-    _sort_bins_by_utilization(bins, resource_weights, running_costs)
+    # _sort_bins_by_utilization(bins, resource_weights, running_costs)
 
     while True:
         moved = False
@@ -729,7 +723,7 @@ def repack_jobs(
                         job_moved = True
                         moved = True
 
-                        if allow_downsize and int(np.sum(source.item_counts)) > 0:
+                        if int(np.sum(source.item_counts)) > 0:
                             _maybe_downsize_bin(
                                 source, capacities, requirements, running_costs
                             )
@@ -759,8 +753,6 @@ def repack_schedule(
     purchase_costs: np.ndarray,
     running_costs: np.ndarray,
     resource_weights: np.ndarray | None = None,
-    *,
-    allow_downsize: bool = False,
 ) -> ScheduleResult:
     """Repack all time slots with ``repack_jobs`` and recompute costs."""
 
@@ -772,7 +764,6 @@ def repack_schedule(
             requirements=requirements,
             running_costs=running_costs,
             resource_weights=resource_weights,
-            allow_downsize=allow_downsize,
         )
         _refresh_bin_utilization(repacked_slot.bins)
         repacked_slots.append(repacked_slot)
@@ -780,36 +771,17 @@ def repack_schedule(
     purchase_vec = np.asarray(purchase_costs, dtype=float).reshape(-1)
     running_vec = np.asarray(running_costs, dtype=float).reshape(-1)
     machine_vector = np.zeros_like(purchase_vec, dtype=int)
-    running_total = 0.0
+    total_cost = 0.0
 
     for slot in repacked_slots:
         counts = np.asarray(slot.machine_counts, dtype=int).reshape(-1)
         machine_vector = np.maximum(machine_vector, counts)
-        running_total += float(np.dot(running_vec, counts))
+        total_cost += float(np.dot(running_vec, counts))
 
-    baseline = (
-        np.zeros_like(machine_vector, dtype=int)
-        if schedule.purchased_baseline is None
-        else np.asarray(schedule.purchased_baseline, dtype=int).reshape(-1)
-    )
-    if baseline.shape != machine_vector.shape:
-        raise ValueError(
-            "purchased_baseline must have one entry per machine type "
-            f"({machine_vector.shape[0]}), got {baseline.shape[0]}."
-        )
-    incremental_purchases = np.maximum(machine_vector - baseline, 0)
-    purchase_total = float(np.dot(purchase_vec, incremental_purchases))
-    total_cost = purchase_total + running_total
+    total_cost += float(np.dot(purchase_vec, machine_vector))
 
-    repacked = ScheduleResult(
+    return ScheduleResult(
         total_cost=total_cost,
         machine_vector=machine_vector,
         time_slot_solutions=repacked_slots,
-        purchased_baseline=baseline.copy(),
     )
-
-    # Local-improvement operator: never return a worse schedule.
-    if float(repacked.total_cost) > float(schedule.total_cost) + 1e-9:
-        return schedule
-
-    return repacked
