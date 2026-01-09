@@ -211,7 +211,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Comma-separated list of scheduler names "
             "(ruin_recreate, ffd, ffd_new, "
-            "ffd_sum, ffd_max, ffd_prod, ffd_with_repack, bfd)."
+            "ffd_sum, ffd_max, ffd_prod, ffd_l2, ffd_with_repack, bfd)."
         ),
     )
     parser.add_argument(

@@ -22,6 +22,7 @@ SCHEDULER_ALIASES: dict[str, str] = {
     "ffd_sum": "ffd_sum",
     "ffd_max": "ffd_max",
     "ffd_prod": "ffd_prod",
+    "ffd_l2": "ffd_l2",
     "ffd_with_repack": "ffd_with_repack",
     "simple_scheduler": "ffd_with_repack",
     "bfd": "bfd",
@@ -98,6 +99,17 @@ def build_scheduler(
                 problem,
                 BinTypeSelectionMethod.CHEAPEST,
                 job_ordering_method=JobTypeOrderingMethod.SORT_PROD,
+            )
+
+        return _ffd
+
+    if canonical == "ffd_l2":
+
+        def _ffd(problem: ProblemInstance) -> ScheduleResult:
+            return ffd_schedule(
+                problem,
+                BinTypeSelectionMethod.CHEAPEST,
+                job_ordering_method=JobTypeOrderingMethod.SORT_L2,
             )
 
         return _ffd
