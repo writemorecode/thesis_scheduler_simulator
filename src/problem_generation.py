@@ -488,6 +488,111 @@ def write_dataset(
     return metadata
 
 
+def write_dataset_parameters_csv(
+    parameters: object,
+    *,
+    dataset_dir: str | Path = "dataset",
+    csv_name: str = "dataset_parameters.csv",
+    preferred_order: Iterable[str] = (
+        "seed",
+        "num_instances",
+        "iterations",
+        "K_min",
+        "K_max",
+        "J_min",
+        "J_max",
+        "M_min",
+        "M_max",
+        "T_min",
+        "T_max",
+        "output_dir",
+        "dataset_dir",
+    ),
+) -> None:
+    """
+    Write dataset-generation parameters in a wide (1 row per dataset) CSV format.
+
+    If the file already exists, a new row is appended. If the set/order of columns
+    changes between runs, the file is rewritten with the union of columns so that
+    each dataset run remains a single row.
+    """
+
+    dataset_path = Path(dataset_dir)
+    dataset_path.mkdir(parents=True, exist_ok=True)
+    csv_path = dataset_path / csv_name
+
+    try:
+        parameter_dict = dict(parameters)  # type: ignore[arg-type]
+    except TypeError:
+        parameter_dict = dict(vars(parameters))
+
+    preferred = list(preferred_order)
+    ordered_fields: list[str] = []
+    used: set[str] = set()
+
+    for key in preferred:
+        if key in parameter_dict and key not in used:
+            ordered_fields.append(key)
+            used.add(key)
+
+    for key in sorted(set(parameter_dict.keys()) - used):
+        ordered_fields.append(key)
+
+    row = {
+        key: ("" if parameter_dict.get(key) is None else str(parameter_dict.get(key)))
+        for key in ordered_fields
+    }
+
+    if not csv_path.exists():
+        with csv_path.open("w", newline="") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=ordered_fields)
+            writer.writeheader()
+            writer.writerow(row)
+        return
+
+    with csv_path.open("r", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        existing_fields = list(reader.fieldnames or [])
+        existing_rows = list(reader)
+
+    if set(existing_fields) == {"parameter", "value"} and len(existing_fields) == 2:
+        pivoted: dict[str, str] = {}
+        for existing_row in existing_rows:
+            key = (existing_row.get("parameter") or "").strip()
+            if not key:
+                continue
+            pivoted[key] = existing_row.get("value", "") or ""
+        existing_fields = list(pivoted.keys())
+        existing_rows = [pivoted] if pivoted else []
+
+    if existing_fields == ordered_fields:
+        with csv_path.open("a", newline="") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=ordered_fields)
+            writer.writerow(row)
+        return
+
+    union_fields_set = set(existing_fields) | set(ordered_fields)
+    union_fields: list[str] = []
+    used_union: set[str] = set()
+
+    for key in preferred:
+        if key in union_fields_set and key not in used_union:
+            union_fields.append(key)
+            used_union.add(key)
+
+    for key in sorted(union_fields_set - used_union):
+        union_fields.append(key)
+
+    def normalize(input_row: dict[str, str]) -> dict[str, str]:
+        return {field: input_row.get(field, "") for field in union_fields}
+
+    with csv_path.open("w", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=union_fields)
+        writer.writeheader()
+        writer.writerows(normalize(r) for r in existing_rows)
+        writer.writerow(normalize(row))
+
+
 def generate_dataset(
     num_instances: int,
     *,
