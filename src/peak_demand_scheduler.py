@@ -6,9 +6,8 @@ from algorithms import (
     ScheduleResult,
     TimeSlotSolution,
     build_time_slot_solution,
-    repack_schedule,
 )
-from packing import first_fit_decreasing
+from packing import BinTypeSelectionMethod, JobTypeOrderingMethod, first_fit_decreasing
 from problem_generation import ProblemInstance
 
 
@@ -92,6 +91,8 @@ def peak_demand_scheduler(problem: ProblemInstance) -> ScheduleResult:
             L=slot_jobs,
             opened_bins=opened_bins,
             purchased_bins=purchased_bins,
+            job_ordering_method=JobTypeOrderingMethod.SORT_BY_WEIGHT,
+            selection_method=BinTypeSelectionMethod.SLACK,
         )
         return build_time_slot_solution(
             result.bins,
@@ -131,13 +132,4 @@ def peak_demand_scheduler(problem: ProblemInstance) -> ScheduleResult:
         purchased_baseline=np.zeros(M, dtype=int),
     )
 
-    repacked_solution = repack_schedule(
-        solution,
-        capacities=problem.capacities,
-        requirements=problem.requirements,
-        purchase_costs=problem.purchase_costs,
-        running_costs=problem.running_costs,
-        resource_weights=problem.resource_weights,
-    )
-
-    return repacked_solution
+    return solution

@@ -267,9 +267,6 @@ def main() -> None:
             args.results_dir, scheduler_names=scheduler_names
         )
 
-    print("\nJoined data sample (first 5 rows):")
-    print(joined.head())
-
     print("\nLog-ratio summaries:")
     print(summary.sort("ratio"))
 

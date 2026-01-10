@@ -7,6 +7,7 @@ import numpy as np
 from algorithms import ScheduleResult, ffd_schedule, ffd_weighted_sort_schedule
 from best_fit import bfd_schedule
 from packing import BinTypeSelectionMethod, JobTypeOrderingMethod
+from peak_demand_scheduler import peak_demand_scheduler
 from problem_generation import ProblemInstance
 from ruin_recreate import ruin_recreate_schedule
 from simple_scheduler import simple_scheduler
@@ -26,6 +27,10 @@ SCHEDULER_ALIASES: dict[str, str] = {
     "ffd_with_repack": "ffd_with_repack",
     "simple_scheduler": "ffd_with_repack",
     "bfd": "bfd",
+    "peak_demand": "peak_demand",
+    "peak": "peak_demand",
+    "peak_demand_scheduler": "peak_demand",
+    "pds": "peak_demand",
 }
 
 
@@ -119,5 +124,8 @@ def build_scheduler(
 
     if canonical == "bfd":
         return bfd_schedule
+
+    if canonical == "peak_demand":
+        return peak_demand_scheduler
 
     raise ValueError(f"Unsupported scheduler '{name}'.")

@@ -24,7 +24,7 @@ Import `first_fit_decreasing` to use the simulator inside your own scripts.
 1. Run schedulers and write raw per-instance results:
 
 ```bash
-uv run python src/eval.py --dataset dataset --schedulers ruin_recreate,ffd,bfd --output-dir eval_results --seed 123
+uv run python src/eval.py --dataset dataset --schedulers ruin_recreate,ffd,bfd,peak_demand --output-dir eval_results --seed 123
 ```
 
 2. Summarize per-scheduler performance:
