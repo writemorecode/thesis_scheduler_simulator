@@ -56,9 +56,9 @@ def _summarize_scheduler(
 
     if verbose:
         print(
-            f"{scheduler_name}: avg_cost={row['avg_cost']:.4f}, "
-            f"min_cost={row['min_cost']:.4f}, max_cost={row['max_cost']:.4f}, "
-            f"avg_runtime={row['avg_runtime_sec']:.3f}s, "
+            f"{scheduler_name}: avg_cost={row['avg_cost']:.2f}, "
+            f"min_cost={row['min_cost']:.2f}, max_cost={row['max_cost']:.2f}, "
+            f"avg_runtime={row['avg_runtime_sec']:.2f}s, "
             f"avg_machines={row['avg_machines']:.2f}"
         )
 
@@ -142,6 +142,14 @@ def main() -> None:
 
     rows.sort(key=lambda row: float(row["avg_cost"]))
 
+    numeric_fields = {
+        "avg_cost",
+        "min_cost",
+        "max_cost",
+        "avg_runtime_sec",
+        "avg_machines",
+    }
+
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", newline="") as handle:
         writer = csv.DictWriter(
@@ -156,7 +164,11 @@ def main() -> None:
             ],
         )
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            formatted_row = dict(row)
+            for field in numeric_fields:
+                formatted_row[field] = f"{float(row[field]):.2f}"
+            writer.writerow(formatted_row)
 
 
 if __name__ == "__main__":

@@ -52,11 +52,37 @@ evaluate_dataset() {
     --export-summary "${results_dir}/eval_log_ratio_summary_${name}.csv"
 
   echo "Running performance profiles for schedulers..."
+  local perf_profile_csv="${results_dir}/eval_performance_profiles_${name}.csv"
+  local perf_profile_svg="${results_dir}/eval_performance_profiles_${name}.svg"
+  local perf_profile_png="${results_dir}/eval_performance_profiles_${name}.png"
+
+  if uv run src/performance_profile.py \
+    --results-dir "${raw_dir}" \
+    --schedulers "${SCHEDULERS}" \
+    --output "${perf_profile_csv}" \
+    --plot-filename "${perf_profile_svg}" \
+    --verbose; then
+    if [[ -s "${perf_profile_svg}" ]]; then
+      echo "Wrote performance profile plot: ${perf_profile_svg}"
+      return
+    fi
+    echo "SVG plot command succeeded but '${perf_profile_svg}' is missing/empty; falling back to PNG."
+  else
+    echo "Failed to generate SVG performance profile plot; falling back to PNG."
+  fi
+
   uv run src/performance_profile.py \
     --results-dir "${raw_dir}" \
     --schedulers "${SCHEDULERS}" \
-    --output "${results_dir}/eval_performance_profiles_${name}.csv" \
+    --output "${perf_profile_csv}" \
+    --plot-filename "${perf_profile_png}" \
     --verbose
+
+  if [[ ! -s "${perf_profile_png}" ]]; then
+    echo "Failed to generate performance profile plot (SVG and PNG both unavailable)."
+    return 1
+  fi
+  echo "Wrote performance profile plot: ${perf_profile_png}"
 }
 
 mkdir -p "${EVAL_ROOT}"
