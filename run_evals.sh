@@ -48,7 +48,7 @@ evaluate_dataset() {
   echo "Running scheduler statistical summary..."
   uv run src/analysis.py \
     --results-dir "${raw_dir}" \
-    --schedulers "${SCHEDULERS}" \
+    --schedulers "bfd,ffd_new" \
     --export-summary "${results_dir}/eval_log_ratio_summary_${name}.csv"
 
   echo "Running performance profiles for schedulers..."
