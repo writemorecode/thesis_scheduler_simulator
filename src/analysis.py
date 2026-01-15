@@ -162,10 +162,24 @@ def add_log_ratio_columns(
     return result, log_ratio_columns
 
 
+def _split_ratio_label(ratio_column: str) -> tuple[str, str]:
+    """Parse `log_ratio_{Algorithm A}_over_{Algorithm B}` into (Algorithm A, Algorithm B)."""
+    prefix = "log_ratio_"
+    token = "_over_"
+    if not ratio_column.startswith(prefix) or token not in ratio_column:
+        raise ValueError(f"Unexpected ratio column label: {ratio_column}")
+    remainder = ratio_column.removeprefix(prefix)
+    algo_a, algo_b = remainder.rsplit(token, 1)
+    if not algo_a or not algo_b:
+        raise ValueError(f"Unexpected ratio column label: {ratio_column}")
+    return algo_a, algo_b
+
+
 def summarize_ratios(df: pl.DataFrame, ratio_columns: Iterable[str]) -> pl.DataFrame:
     """Compute summary statistics and 95% paired t CIs for each log-ratio column."""
     summaries = []
     for col in ratio_columns:
+        algo_a, algo_b = _split_ratio_label(col)
         series = df[col]
         count = series.len()
         mean = series.mean()
@@ -182,8 +196,8 @@ def summarize_ratios(df: pl.DataFrame, ratio_columns: Iterable[str]) -> pl.DataF
             ci_high = np.exp(mean + half_width)
         summaries.append(
             {
-                "ratio": col,
-                "count": count,
+                "Algorithm A": algo_a,
+                "Algorithm B": algo_b,
                 "mean": mean,
                 "median": median,
                 "std": std,
@@ -268,7 +282,7 @@ def main() -> None:
         )
 
     print("\nLog-ratio summaries:")
-    print(summary.sort("ratio"))
+    print(summary.sort(["Algorithm A", "Algorithm B"]))
 
     if args.export_joined:
         joined.write_csv(args.export_joined)
