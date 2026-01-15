@@ -7,6 +7,8 @@ import itertools
 import math
 from pathlib import Path
 
+import numpy as np
+
 from eval_utils import (
     normalize_scheduler_name,
     parse_scheduler_list,
@@ -112,14 +114,7 @@ def compute_tau1_wins(
 
 
 def _build_tau_values(max_ratio: float, num_points: int = 200) -> list[float]:
-    if max_ratio <= 1.0:
-        return [1.0]
-    if num_points < 2:
-        raise ValueError("num_points must be at least 2.")
-    log_min = 0.0
-    log_max = math.log10(max_ratio)
-    step = (log_max - log_min) / (num_points - 1)
-    return [0] + [10 ** (log_min + i * step) for i in range(num_points - 1)]
+    return np.linspace(1.0, max_ratio, num=num_points).tolist()
 
 
 def compute_performance_profiles(
@@ -160,8 +155,21 @@ def _plot_performance_profiles(
     profiles: dict[str, list[float]],
     output_path: Path,
 ) -> None:
+    import matplotlib as mpl
     import matplotlib.pyplot as plt
     from matplotlib.ticker import ScalarFormatter
+
+    mpl.rcParams.update(
+        {
+            "font.family": "serif",
+            "mathtext.fontset": "stix",
+            "font.size": 10,
+            "axes.labelsize": 10,
+            "legend.fontsize": 9,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
+        }
+    )
 
     fig, ax = plt.subplots()
     scheduler_names = sorted(profiles)
@@ -177,8 +185,7 @@ def _plot_performance_profiles(
             color=color,
             linestyle=linestyle,
         )
-    ax.set_xscale("log")
-    ax.set_xlabel("log(Tau)")
+    ax.set_xlabel("Tau")
     ax.set_ylabel("Fraction of instances")
     ax.set_title("Dolan-More Performance Profiles")
     formatter = ScalarFormatter()
