@@ -27,6 +27,8 @@ from eval_utils import (
     scheduler_output_filename,
 )
 
+CSV_ROUND_DIGITS = 6
+
 
 @dataclass(frozen=True)
 class AlgorithmData:
@@ -210,6 +212,14 @@ def summarize_ratios(df: pl.DataFrame, ratio_columns: Iterable[str]) -> pl.DataF
     return pl.DataFrame(summaries)
 
 
+def _rounded_for_csv(df: pl.DataFrame, digits: int = CSV_ROUND_DIGITS) -> pl.DataFrame:
+    exprs: list[pl.Expr] = []
+    for name, dtype in df.schema.items():
+        if dtype in (pl.Float32, pl.Float64):
+            exprs.append(pl.col(name).round(digits))
+    return df.with_columns(exprs) if exprs else df
+
+
 def run_analysis(
     results_dir: Path = Path("eval_results"),
     mapping: dict[str, str] | None = None,
@@ -285,10 +295,10 @@ def main() -> None:
     print(summary.sort(["Algorithm A", "Algorithm B"]))
 
     if args.export_joined:
-        joined.write_csv(args.export_joined)
+        _rounded_for_csv(joined).write_csv(args.export_joined)
         print(f"\nWrote joined data to {args.export_joined}")
     if args.export_summary:
-        summary.write_csv(args.export_summary)
+        _rounded_for_csv(summary).write_csv(args.export_summary)
         print(f"Wrote summary to {args.export_summary}")
 
 
