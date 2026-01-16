@@ -4,7 +4,11 @@ from collections.abc import Callable
 
 import numpy as np
 
-from simulator.algorithms import ScheduleResult, ffd_schedule, ffd_weighted_sort_schedule
+from simulator.algorithms import (
+    ScheduleResult,
+    ffd_schedule,
+    ffd_weighted_sort_schedule,
+)
 from simulator.best_fit import bfd_schedule
 from simulator.packing import BinTypeSelectionMethod, JobTypeOrderingMethod
 from simulator.peak_demand_scheduler import peak_demand_scheduler
@@ -130,9 +134,7 @@ def get_scheduler(
         )
 
     if canonical == "ffd_with_repack":
-        max_iterations = (
-            DEFAULT_REPACK_ITERATIONS if iterations is None else iterations
-        )
+        max_iterations = DEFAULT_REPACK_ITERATIONS if iterations is None else iterations
         return lambda problem: ffd_with_repack_schedule(
             problem, iterations=max_iterations
         )
