@@ -26,10 +26,10 @@ def _require_pulp():
 
 @dataclass
 class ILPModelData:
-    model: "pulp.LpProblem"
-    x_vars: dict[tuple[int, int, int], "pulp.LpVariable"]
-    y_vars: dict[tuple[int, int, int, int], "pulp.LpVariable"]
-    z_vars: dict[tuple[int, int], "pulp.LpVariable"]
+    model: pulp.LpProblem
+    x_vars: dict[tuple[int, int, int], pulp.LpVariable]
+    y_vars: dict[tuple[int, int, int, int], pulp.LpVariable]
+    z_vars: dict[tuple[int, int], pulp.LpVariable]
     metadata: dict
 
 
@@ -179,10 +179,10 @@ def build_exact_ilp(
 
 
 def run_exact_solver(
-    model: "pulp.LpProblem",
-    x_vars: dict[tuple[int, int, int], "pulp.LpVariable"],
-    y_vars: dict[tuple[int, int, int, int], "pulp.LpVariable"],
-    z_vars: dict[tuple[int, int], "pulp.LpVariable"],
+    model: pulp.LpProblem,
+    x_vars: dict[tuple[int, int, int], pulp.LpVariable],
+    y_vars: dict[tuple[int, int, int, int], pulp.LpVariable],
+    z_vars: dict[tuple[int, int], pulp.LpVariable],
     metadata: dict,
     *,
     time_limit: int | None = None,
