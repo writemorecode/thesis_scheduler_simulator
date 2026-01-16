@@ -5,12 +5,23 @@ description = "Simulator for bin-packing"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "matplotlib>=3.10.7",
     "numpy>=2.3.4",
-    "polars>=1.36.1",
-    "pulp>=2.9.0",
-    "scipy>=1.16.3",
 ]
+
+[project.optional-dependencies]
+exact = [
+    "pulp>=2.9.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.ruff.lint]
 select = [
@@ -19,5 +30,4 @@ select = [
     "I",
     "UP",
 ]
-
 

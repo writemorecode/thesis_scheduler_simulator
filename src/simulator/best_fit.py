@@ -4,9 +4,9 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from algorithms import ScheduleResult, build_time_slot_solution
-from packing import BinInfo, BinPackingResult, sort_items_by_weight
-from problem_generation import ProblemInstance
+from simulator.algorithms import ScheduleResult, build_time_slot_solution
+from simulator.packing import BinInfo, BinPackingResult, sort_items_by_weight
+from simulator.problem import ProblemInstance
 
 
 def _prepare_vector(vec: np.ndarray, length: int, name: str) -> np.ndarray:
