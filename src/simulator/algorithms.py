@@ -5,14 +5,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from packing import BinInfo as _BaseBinInfo
-from packing import (
+from simulator.packing import BinInfo as _BaseBinInfo
+from simulator.packing import (
     BinSelectionFn,
     BinTypeSelectionMethod,
     JobTypeOrderingMethod,
     first_fit_sorted,
 )
-from problem_generation import ProblemInstance
+from simulator.problem import ProblemInstance
 
 
 class BinInfo(_BaseBinInfo):

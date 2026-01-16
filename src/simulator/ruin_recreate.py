@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from algorithms import (
+from simulator.algorithms import (
     BinInfo,
     ScheduleResult,
     TimeSlotSolution,
@@ -15,8 +15,12 @@ from algorithms import (
     ffd_schedule,
     repack_schedule,
 )
-from packing import BinTypeSelectionMethod, JobTypeOrderingMethod, first_fit_decreasing
-from problem_generation import ProblemInstance
+from simulator.packing import (
+    BinTypeSelectionMethod,
+    JobTypeOrderingMethod,
+    first_fit_decreasing,
+)
+from simulator.problem import ProblemInstance
 
 MAX_FRACTION = 0.95
 

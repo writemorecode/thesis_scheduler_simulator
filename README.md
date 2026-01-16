@@ -1,40 +1,37 @@
 ### Multidimensional Heterogeneous First-Fit Bin Packing
 
-`main.py` contains a NumPy-based simulator for packing item types with multi-dimensional demands into heterogeneous bin types using the First-Fit heuristic. The solver accounts for per-bin purchase and opening costs and returns both the packing plan and the total cost.
+This package provides scheduling and packing algorithms for heterogeneous
+multidimensional bin packing. Use the public API to run a single problem
+instance on any supported scheduler.
 
 #### Quick Start
 
-```bash
-uv run python main.py
+```python
+import numpy as np
+
+from simulator import ProblemInstance, run_instance
+
+problem = ProblemInstance(
+    capacities=np.array([[8, 12], [4, 6]]),
+    requirements=np.array([[3, 5], [2, 1]]),
+    job_counts=np.array([4, 3]),
+    purchase_costs=np.array([10.0, 14.0]),
+    running_costs=np.array([1.0, 1.5]),
+    resource_weights=np.array([1.0, 1.0]),
+)
+
+result = run_instance(problem, scheduler="ffd")
+print(result.total_cost)
 ```
 
-The example in `main.py` demonstrates how to structure the input matrices:
+Install the exact ILP solver extras when you need `solve_exact`:
 
-- `C` (`K x M`): bin capacity columns (one column per bin type).
-- `R` (`K x J`): item requirement columns (one column per item type).
-- `L` (`J x 1`): counts of each item type.
-- `purchase_costs`, `opening_costs`: one entry per bin type.
-- `opened_bins` (optional): length-`M` vector with how many bins of each type are
-  already open; their purchase + opening costs are charged immediately.
-
-Import `first_fit_decreasing` to use the simulator inside your own scripts.
+```bash
+uv add "simulator[exact]"
+```
 
 #### Evaluation Workflow
 
-1. Run schedulers and write raw per-instance results:
-
-```bash
-uv run python src/eval.py --dataset dataset --schedulers ruin_recreate,ffd,bfd,peak_demand --output-dir eval_results --seed 123
-```
-
-2. Summarize per-scheduler performance:
-
-```bash
-uv run python src/eval_multi_summary.py --results-dir eval_results --output eval_summary_results.csv
-```
-
-3. Statistical analysis on a subset of schedulers:
-
-```bash
-uv run python src/analysis.py --results-dir eval_results --schedulers ffd,ruin_recreate --export-summary eval_log_ratio_summary.csv
-```
+Dataset generation and evaluation scripts now live in the thesis repository
+(`thesis/scripts`). Run the evaluation workflow from that project so the
+dependencies stay separated from the simulator library.

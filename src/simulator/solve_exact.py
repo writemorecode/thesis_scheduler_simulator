@@ -3,26 +3,33 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-try:
-    import pulp
-except ImportError as exc:  # pragma: no cover - handled at runtime
-    raise ImportError(
-        "pulp is required for exact ILP solving. Install with `pip install pulp`."
-    ) from exc
+from simulator.algorithms import BinInfo, ScheduleResult, TimeSlotSolution
+from simulator.problem import ProblemInstance
 
-from algorithms import BinInfo, ScheduleResult, TimeSlotSolution
-from problem_generation import ProblemInstance
+if TYPE_CHECKING:
+    import pulp
+
+
+def _require_pulp():
+    try:
+        import pulp  # type: ignore
+    except ImportError as exc:  # pragma: no cover - handled at runtime
+        raise ImportError(
+            "pulp is required for exact ILP solving. Install with `pip install pulp`."
+        ) from exc
+    return pulp
 
 
 @dataclass
 class ILPModelData:
-    model: pulp.LpProblem
-    x_vars: dict[tuple[int, int, int], pulp.LpVariable]
-    y_vars: dict[tuple[int, int, int, int], pulp.LpVariable]
-    z_vars: dict[tuple[int, int], pulp.LpVariable]
+    model: "pulp.LpProblem"
+    x_vars: dict[tuple[int, int, int], "pulp.LpVariable"]
+    y_vars: dict[tuple[int, int, int, int], "pulp.LpVariable"]
+    z_vars: dict[tuple[int, int], "pulp.LpVariable"]
     metadata: dict
 
 
@@ -36,6 +43,7 @@ def build_exact_ilp(
     reconstruct a ScheduleResult after solving.
     """
 
+    pulp = _require_pulp()
     capacities = np.asarray(problem.capacities, dtype=float)
     requirements = np.asarray(problem.requirements, dtype=float)
     job_counts = np.asarray(problem.job_counts, dtype=int)
@@ -171,16 +179,17 @@ def build_exact_ilp(
 
 
 def run_exact_solver(
-    model: pulp.LpProblem,
-    x_vars: dict[tuple[int, int, int], pulp.LpVariable],
-    y_vars: dict[tuple[int, int, int, int], pulp.LpVariable],
-    z_vars: dict[tuple[int, int], pulp.LpVariable],
+    model: "pulp.LpProblem",
+    x_vars: dict[tuple[int, int, int], "pulp.LpVariable"],
+    y_vars: dict[tuple[int, int, int, int], "pulp.LpVariable"],
+    z_vars: dict[tuple[int, int], "pulp.LpVariable"],
     metadata: dict,
     *,
     time_limit: int | None = None,
 ) -> ScheduleResult:
     """Solve the ILP model and build a ScheduleResult."""
 
+    pulp = _require_pulp()
     capacities = metadata["capacities"]
     requirements = metadata["requirements"]
     job_counts = metadata["job_counts"]

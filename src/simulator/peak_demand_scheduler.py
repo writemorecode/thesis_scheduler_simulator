@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import numpy as np
 
-from algorithms import (
+from simulator.algorithms import (
     ScheduleResult,
     TimeSlotSolution,
     build_time_slot_solution,
 )
-from packing import BinTypeSelectionMethod, JobTypeOrderingMethod, first_fit_decreasing
-from problem_generation import ProblemInstance
+from simulator.packing import (
+    BinTypeSelectionMethod,
+    JobTypeOrderingMethod,
+    first_fit_decreasing,
+)
+from simulator.problem import ProblemInstance
 
 
 def peak_demand_scheduler(problem: ProblemInstance) -> ScheduleResult:
