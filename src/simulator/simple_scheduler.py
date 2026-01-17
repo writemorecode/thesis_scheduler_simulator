@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from algorithms import (
+from simulator.algorithms import (
     ScheduleResult,
     ffd_schedule,
     repack_schedule,
 )
-from packing import BinTypeSelectionMethod, JobTypeOrderingMethod
-from problem_generation import ProblemInstance
+from simulator.packing import BinTypeSelectionMethod, JobTypeOrderingMethod
+from simulator.problem import ProblemInstance
 
 
 def simple_scheduler(
