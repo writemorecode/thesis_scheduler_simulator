@@ -9,9 +9,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-exact = [
-    "pulp>=2.9.0",
-]
+exact = []
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
