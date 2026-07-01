@@ -479,7 +479,7 @@ def ffd_schedule(
     if purchase_vec.shape[0] != M or running_vec.shape[0] != M:
         raise ValueError("Cost vectors must have one entry per machine type.")
 
-    initial_purchased = np.zeros(M, dtype=int)
+    purchased_counts = np.zeros(M, dtype=int)
 
     time_slot_solutions: list[TimeSlotSolution] = []
     machine_vector = np.zeros(M, dtype=int)
@@ -497,7 +497,7 @@ def ffd_schedule(
                 purchase_costs=purchase_vec,
                 opening_costs=running_vec,
                 L=slot_jobs,
-                purchased_bins=initial_purchased,
+                purchased_bins=purchased_counts,
                 selection_method=bin_selection_method,
                 job_ordering_method=job_ordering_method,
                 weights=resource_weights,
@@ -515,11 +515,13 @@ def ffd_schedule(
         machine_vector = np.maximum(machine_vector, slot_solution.machine_counts)
         total_cost += float(np.dot(running_vec, slot_solution.machine_counts))
 
+    total_cost += float(np.dot(purchase_vec, machine_vector))
+
     return ScheduleResult(
         total_cost=total_cost,
         machine_vector=machine_vector,
         time_slot_solutions=time_slot_solutions,
-        purchased_baseline=initial_purchased,
+        purchased_baseline=np.zeros(M, dtype=int),
     )
 
 
